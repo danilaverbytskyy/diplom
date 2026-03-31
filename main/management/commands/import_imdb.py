@@ -1,17 +1,15 @@
 import csv
-import gzip
 import json
 from itertools import islice
 from pathlib import Path
 
 from django.conf import settings
 from django.core.management.base import BaseCommand
-from django.db import transaction
 
 from main.models import Genre, Person, Title, TitleCrew, TitlePrincipal, TitleRating
 
 
-BATCH_SIZE = 100000
+BATCH_SIZE = 20000
 
 
 def nullify(value: str):
@@ -51,14 +49,14 @@ def parse_characters(value: str):
 
 
 class Command(BaseCommand):
-    help = "Import IMDb datasets from TSV.GZ files"
+    help = "Import IMDb datasets from TSV files"
 
     def add_arguments(self, parser):
         parser.add_argument(
             "--path",
             type=str,
             default=str(Path(settings.BASE_DIR) / "data" / "imdb"),
-            help="Path to directory with IMDb .tsv.gz files",
+            help="Path to directory with IMDb .tsv files",
         )
         parser.add_argument(
             "--skip-titles",
@@ -103,28 +101,28 @@ class Command(BaseCommand):
             self.stderr.write(self.style.ERROR(f"Directory does not exist: {base_path}"))
             return
 
-        if options["truncate"]:
-            self.truncate_tables()
+        # if options["truncate"]:
+        #     self.truncate_tables()
 
-        if not options["skip_titles"]:
-            self.import_titles(base_path / "title.basics.tsv.gz")
+        # if not options["skip_titles"]:
+        #     self.import_titles(base_path / "title.basics.tsv")
 
-        if not options["skip_ratings"]:
-            self.import_ratings(base_path / "title.ratings.tsv.gz")
+        # if not options["skip_ratings"]:
+        #     self.import_ratings(base_path / "title.ratings.tsv")
+
+        if not options["skip_persons"]:
+            self.import_persons(base_path / "name.basics.tsv")
+
+        if not options["skip_known_for"]:
+            self.import_known_for_titles(base_path / "name.basics.tsv")
 
         return
 
-        if not options["skip_persons"]:
-            self.import_persons(base_path / "name.basics.tsv.gz")
-
-        if not options["skip_known_for"]:
-            self.import_known_for_titles(base_path / "name.basics.tsv.gz")
-
         if not options["skip_crew"]:
-            self.import_crew(base_path / "title.crew.tsv.gz")
+            self.import_crew(base_path / "title.crew.tsv")
 
         if not options["skip_principals"]:
-            self.import_principals(base_path / "title.principals.tsv.gz")
+            self.import_principals(base_path / "title.principals.tsv")
 
         self.stdout.write(self.style.SUCCESS("IMDb import completed"))
 
@@ -140,8 +138,8 @@ class Command(BaseCommand):
 
         self.stdout.write(self.style.SUCCESS("Existing data deleted"))
 
-    def open_tsv_gz(self, filepath: Path):
-        return gzip.open(filepath, mode="rt", encoding="utf-8")
+    def open_file(self, filepath: Path):
+        return open(filepath, mode="rt", encoding="utf-8")
 
     def import_titles(self, filepath: Path):
         self.stdout.write(f"Importing titles from {filepath.name}")
@@ -152,7 +150,7 @@ class Command(BaseCommand):
 
         start_from = Title.objects.count()
 
-        with self.open_tsv_gz(filepath) as f:
+        with self.open_file(filepath) as f:
             header_line = next(f).rstrip('\n')
             fieldnames = header_line.split('\t')
 
@@ -210,7 +208,7 @@ class Command(BaseCommand):
         relations_batch = []
         rel_count = 0
 
-        with self.open_tsv_gz(filepath) as f:
+        with self.open_file(filepath) as f:
             reader = csv.DictReader(f, delimiter="\t")
 
             for row in reader:
@@ -240,10 +238,22 @@ class Command(BaseCommand):
         ratings_batch = []
         count = 0
 
-        with self.open_tsv_gz(filepath) as f:
-            reader = csv.DictReader(f, delimiter="\t")
+        with self.open_file(filepath) as f:
+            start_from = TitleRating.objects.count()
+            header_line = next(f).rstrip('\n')
+            fieldnames = header_line.split('\t')
 
+            skipped_iter = islice(f, start_from - 1, None)
+
+            reader = csv.DictReader(
+                skipped_iter,
+                delimiter='\t',
+                fieldnames=fieldnames,
+            )
             for row in reader:
+                if row["tconst"] in {'tt12149332', 'tt27404292', 'tt28535095', 'tt3984412'}:
+                    continue
+
                 ratings_batch.append(
                     TitleRating(
                         title_id=row["tconst"],
@@ -255,7 +265,7 @@ class Command(BaseCommand):
                 if len(ratings_batch) >= BATCH_SIZE:
                     TitleRating.objects.bulk_create(
                         ratings_batch,
-                        ignore_conflicts=True,
+                        update_conflicts=True,
                         update_fields=["average_rating", "num_votes"],
                         unique_fields=["title"],
                     )
@@ -281,7 +291,7 @@ class Command(BaseCommand):
         persons_batch = []
         count = 0
 
-        with self.open_tsv_gz(filepath) as f:
+        with self.open_file(filepath) as f:
             reader = csv.DictReader(f, delimiter="\t")
 
             for row in reader:
@@ -317,7 +327,7 @@ class Command(BaseCommand):
         valid_titles = set(Title.objects.values_list("tconst", flat=True))
         valid_persons = set(Person.objects.values_list("nconst", flat=True))
 
-        with self.open_tsv_gz(filepath) as f:
+        with self.open_file(filepath) as f:
             reader = csv.DictReader(f, delimiter="\t")
 
             for row in reader:
@@ -354,7 +364,7 @@ class Command(BaseCommand):
         valid_titles = set(Title.objects.values_list("tconst", flat=True))
         valid_persons = set(Person.objects.values_list("nconst", flat=True))
 
-        with self.open_tsv_gz(filepath) as f:
+        with self.open_file(filepath) as f:
             reader = csv.DictReader(f, delimiter="\t")
 
             for row in reader:
@@ -403,7 +413,7 @@ class Command(BaseCommand):
         valid_titles = set(Title.objects.values_list("tconst", flat=True))
         valid_persons = set(Person.objects.values_list("nconst", flat=True))
 
-        with self.open_tsv_gz(filepath) as f:
+        with self.open_file(filepath) as f:
             reader = csv.DictReader(f, delimiter="\t")
 
             for row in reader:
