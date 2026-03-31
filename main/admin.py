@@ -43,8 +43,7 @@ class TitleAdmin(admin.ModelAdmin):
         "display_votes",
     )
     list_filter = ("title_type", "is_adult", "start_year", "genres")
-    search_fields = ("tconst", "primary_title", "original_title")
-    ordering = ("-start_year", "primary_title")
+    search_fields = ("primary_title",)
     autocomplete_fields = ()
     filter_horizontal = ("genres",)
     inlines = (TitleRatingInline, TitleCrewInline, TitlePrincipalInline)

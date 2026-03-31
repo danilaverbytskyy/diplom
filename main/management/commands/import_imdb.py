@@ -1,6 +1,7 @@
 import csv
 import gzip
 import json
+from itertools import islice
 from pathlib import Path
 
 from django.conf import settings
@@ -111,6 +112,8 @@ class Command(BaseCommand):
         if not options["skip_ratings"]:
             self.import_ratings(base_path / "title.ratings.tsv.gz")
 
+        return
+
         if not options["skip_persons"]:
             self.import_persons(base_path / "name.basics.tsv.gz")
 
@@ -147,8 +150,19 @@ class Command(BaseCommand):
         titles_batch = []
         count = 0
 
+        start_from = Title.objects.count()
+
         with self.open_tsv_gz(filepath) as f:
-            reader = csv.DictReader(f, delimiter="\t")
+            header_line = next(f).rstrip('\n')
+            fieldnames = header_line.split('\t')
+
+            skipped_iter = islice(f, start_from - 1, None)
+
+            reader = csv.DictReader(
+                skipped_iter,
+                delimiter='\t',
+                fieldnames=fieldnames,
+            )
 
             for row in reader:
                 genres = split_csv_field(row["genres"])
@@ -242,7 +256,6 @@ class Command(BaseCommand):
                     TitleRating.objects.bulk_create(
                         ratings_batch,
                         ignore_conflicts=True,
-                        update_conflicts=True,
                         update_fields=["average_rating", "num_votes"],
                         unique_fields=["title"],
                     )
