@@ -2,7 +2,7 @@ from django.db import models
 
 
 class Genre(models.Model):
-    name = models.CharField("Название", max_length=64, unique=True, db_index=True)
+    name = models.CharField("Название", max_length=64, unique=True)
 
     class Meta:
         ordering = ["name"]
@@ -41,12 +41,11 @@ class CrewRole(models.TextChoices):
 
 class Title(models.Model):
     tconst = models.CharField("IMDb ID", max_length=16, primary_key=True)
-    title_type = models.CharField("Тип произведения", max_length=32, db_index=True)
-    primary_title = models.CharField("Основное название", max_length=512, db_index=True)
-    original_title = models.CharField("Оригинальное название", max_length=512, db_index=True)
-    is_adult = models.BooleanField("18+", default=False, db_index=True)
-    start_year = models.PositiveIntegerField("Год начала", null=True, blank=True, db_index=True)
-    end_year = models.PositiveIntegerField("Год окончания", null=True, blank=True)
+    title_type = models.CharField("Тип произведения", max_length=32)
+    primary_title = models.CharField("Основное название", max_length=512)
+    is_adult = models.BooleanField("18+", default=False)
+    start_year = models.PositiveSmallIntegerField("Год начала", null=True, blank=True)
+    end_year = models.PositiveSmallIntegerField("Год окончания", null=True, blank=True)
     runtime_minutes = models.PositiveIntegerField("Длительность (мин.)", null=True, blank=True)
     genres = models.ManyToManyField(
         Genre,
@@ -58,11 +57,6 @@ class Title(models.Model):
 
     class Meta:
         ordering = ["-start_year", "primary_title"]
-        indexes = [
-            models.Index(fields=["title_type", "start_year"]),
-            models.Index(fields=["primary_title"]),
-            models.Index(fields=["original_title"]),
-        ]
         verbose_name = "Произведение"
         verbose_name_plural = "Произведения"
 
@@ -86,13 +80,10 @@ class TitleRating(models.Model):
         null=True,
         blank=True,
     )
-    num_votes = models.PositiveIntegerField("Количество голосов", default=0, db_index=True)
+    num_votes = models.PositiveIntegerField("Количество голосов", default=0)
 
     class Meta:
         ordering = ["-average_rating", "-num_votes"]
-        indexes = [
-            models.Index(fields=["average_rating", "num_votes"]),
-        ]
         verbose_name = "Рейтинг"
         verbose_name_plural = "Рейтинги"
 
@@ -102,8 +93,8 @@ class TitleRating(models.Model):
 
 class Person(models.Model):
     nconst = models.CharField("IMDb ID", max_length=16, primary_key=True)
-    primary_name = models.CharField("Имя", max_length=255, db_index=True)
-    birth_year = models.PositiveIntegerField("Год рождения", null=True, blank=True, db_index=True)
+    primary_name = models.CharField("Имя", max_length=255)
+    birth_year = models.PositiveIntegerField("Год рождения", null=True, blank=True)
     death_year = models.PositiveIntegerField("Год смерти", null=True, blank=True)
     primary_professions = models.JSONField("Профессии", default=list, blank=True)
     known_for_titles = models.ManyToManyField(
@@ -115,10 +106,6 @@ class Person(models.Model):
 
     class Meta:
         ordering = ["primary_name"]
-        indexes = [
-            models.Index(fields=["primary_name"]),
-            models.Index(fields=["birth_year"]),
-        ]
         verbose_name = "Персона"
         verbose_name_plural = "Персоны"
 
@@ -140,7 +127,7 @@ class TitlePrincipal(models.Model):
         related_name="principal_titles",
     )
     ordering = models.PositiveIntegerField("Порядок")
-    category = models.CharField("Категория", max_length=64, db_index=True)
+    category = models.CharField("Категория", max_length=64)
     job = models.CharField("Должность", max_length=255, null=True, blank=True)
     characters = models.JSONField("Персонажи", null=True, blank=True)
 
@@ -155,11 +142,6 @@ class TitlePrincipal(models.Model):
                 fields=["title", "person", "category", "ordering"],
                 name="unique_title_person_category_ordering",
             ),
-        ]
-        indexes = [
-            models.Index(fields=["title", "ordering"]),
-            models.Index(fields=["person", "category"]),
-            models.Index(fields=["category"]),
         ]
         verbose_name = "Основной участник"
         verbose_name_plural = "Основные участники"
@@ -181,7 +163,7 @@ class TitleCrew(models.Model):
         on_delete=models.CASCADE,
         related_name="crew_titles",
     )
-    role = models.CharField("Роль", max_length=16, choices=CrewRole.choices, db_index=True)
+    role = models.CharField("Роль", max_length=16, choices=CrewRole.choices)
 
     class Meta:
         constraints = [
@@ -189,10 +171,6 @@ class TitleCrew(models.Model):
                 fields=["title", "person", "role"],
                 name="unique_title_person_role",
             )
-        ]
-        indexes = [
-            models.Index(fields=["title", "role"]),
-            models.Index(fields=["person", "role"]),
         ]
         verbose_name = "Участник съемочной группы"
         verbose_name_plural = "Участники съемочной группы"
