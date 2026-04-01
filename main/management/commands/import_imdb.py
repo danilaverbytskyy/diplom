@@ -116,10 +116,8 @@ class Command(BaseCommand):
         if not options["skip_known_for"]:
             self.import_known_for_titles(base_path / "name.basics.tsv")
 
-        return
-
-        if not options["skip_crew"]:
-            self.import_crew(base_path / "title.crew.tsv")
+        # if not options["skip_crew"]:
+        #     self.import_crew(base_path / "title.crew.tsv")
 
         if not options["skip_principals"]:
             self.import_principals(base_path / "title.principals.tsv")
