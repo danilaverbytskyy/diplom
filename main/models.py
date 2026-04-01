@@ -1,4 +1,5 @@
 from django.db import models
+from django_deprecate_fields import deprecate_field
 
 
 class Genre(models.Model):
