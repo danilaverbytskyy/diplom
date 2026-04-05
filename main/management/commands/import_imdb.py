@@ -1,18 +1,83 @@
 import csv
+import datetime
 import io
 import json
-from itertools import islice, count
 from pathlib import Path
 
 from django.conf import settings
 from django.core.management.base import BaseCommand
 from django.db import connection
 
-from main.models import Genre, Person, Title, Crew, Principal, Rating
+from main.models import Crew, Genre, Person, Principal, Rating, Title
 
 
-BATCH_SIZE = 30000
-PRINCIPALS_COPY_BATCH_ROWS = 100000
+TITLE_BATCH_SIZE = 50000
+RATING_BATCH_SIZE = 50000
+PERSON_BATCH_SIZE = 50000
+RELATION_BATCH_SIZE = 100000
+
+ALLOWED_TITLE_TYPES = {
+    'movie',
+    'short',
+    'tvSeries',
+    'tvMiniSeries',
+    'tvMovie',
+}
+
+TITLE_TYPE_MAP = {
+    'movie': 1,
+    'short': 2,
+    'tvSeries': 3,
+    'tvMiniSeries': 4,
+    'tvMovie': 5,
+    'tvEpisode': 6,
+    'tvShort': 7,
+    'tvSpecial': 8,
+    'tvPilot': 9,
+    'video': 10,
+    'videoGame': 11,
+    'podcastSeries': 12,
+    'podcastEpisode': 13,
+    'radioSeries': 14,
+    'radioEpisode': 15,
+    'musicVideo': 16,
+    'audiobook': 17,
+    'other': 99,
+}
+
+CREW_ROLE_MAP = {
+    'director': 1,
+    'writer': 2,
+}
+
+PRINCIPAL_CATEGORY_MAP = {
+    'actor': 1,
+    'actress': 2,
+    'director': 3,
+    'writer': 4,
+    'producer': 5,
+    'composer': 6,
+    'editor': 7,
+    'cinematographer': 8,
+    'self': 9,
+    'archive_footage': 10,
+    'archive_sound': 11,
+    'soundtrack': 12,
+    'assistant_director': 13,
+    'casting_director': 14,
+    'production_designer': 15,
+    'art_director': 16,
+    'costume_designer': 17,
+    'make_up_department': 18,
+    'camera_department': 19,
+    'music_department': 20,
+    'sound_department': 21,
+    'visual_effects': 22,
+    'animation_department': 23,
+    'executive_producer': 24,
+    'archive_material': 25,
+    'other': 99,
+}
 
 
 def nullify(value: str):
@@ -45,17 +110,30 @@ def split_csv_field(value: str):
     return [item.strip() for item in value.split(',') if item.strip()]
 
 
-def parse_characters(value: str):
+def parse_characters_text(value: str):
     value = nullify(value)
     if value is None:
         return None
 
     if not (value.startswith('[') and value.endswith(']')):
-        return None
+        return value
 
     try:
-        return json.loads(value)
+        parsed = json.loads(value)
+        if isinstance(parsed, list):
+            return ', '.join(str(item) for item in parsed if item is not None)
+        return str(parsed)
     except json.JSONDecodeError:
+        return value
+
+
+def rating_to_tenths(value: str):
+    value = nullify(value)
+    if value is None:
+        return None
+    try:
+        return int(round(float(value) * 10))
+    except (TypeError, ValueError):
         return None
 
 
@@ -73,7 +151,7 @@ def escape_copy_text(value):
 
 
 class Command(BaseCommand):
-    help = 'Import IMDb datasets from TSV files'
+    help = 'Import IMDb TSV datasets into optimized models'
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -81,6 +159,11 @@ class Command(BaseCommand):
             type=str,
             default=str(Path(settings.BASE_DIR) / 'data' / 'imdb'),
             help='Path to directory with IMDb .tsv files',
+        )
+        parser.add_argument(
+            '--truncate',
+            action='store_true',
+            help='Delete existing data before import',
         )
         parser.add_argument(
             '--skip-titles',
@@ -107,11 +190,6 @@ class Command(BaseCommand):
             action='store_true',
             help='Skip title.principals import',
         )
-        parser.add_argument(
-            '--truncate',
-            action='store_true',
-            help='Delete existing data before import',
-        )
 
     def handle(self, *args, **options):
         base_path = Path(options['path'])
@@ -120,7 +198,20 @@ class Command(BaseCommand):
             self.stderr.write(self.style.ERROR(f'Directory does not exist: {base_path}'))
             return
 
-        # self.import_crew(base_path / 'title.crew.tsv')
+        if options['truncate']:
+            self.truncate_tables()
+
+        if not options['skip_titles']:
+            self.import_titles(base_path / 'title.basics.tsv')
+
+        if not options['skip_ratings']:
+            self.import_ratings(base_path / 'title.ratings.tsv')
+
+        if not options['skip_persons']:
+            self.import_persons(base_path / 'name.basics.tsv')
+
+        if not options['skip_crew']:
+            self.import_crew(base_path / 'title.crew.tsv')
 
         if not options['skip_principals']:
             self.import_principals(base_path / 'title.principals.tsv')
@@ -153,39 +244,40 @@ class Command(BaseCommand):
     def import_titles(self, filepath: Path):
         self.stdout.write(f'Importing titles from {filepath.name}')
 
-        genre_names = set()
         titles_batch = []
+        genre_names = set()
         count = 0
-
-        start_from = Title.objects.count()
+        skipped_type = 0
+        skipped_bad_runtime = 0
+        processed = 0
 
         with self.open_file(filepath) as f:
-            header_line = next(f).rstrip('\n')
-            fieldnames = header_line.split('\t')
-
-            skipped_iter = islice(f, start_from - 1, None)
-
-            reader = csv.DictReader(
-                skipped_iter,
-                delimiter='\t',
-                fieldnames=fieldnames,
-            )
+            reader = csv.DictReader(f, delimiter='\t')
 
             for row in reader:
-                genres = split_csv_field(row['genres'])
-                genre_names.update(genres)
+                processed += 1
+
+                raw_title_type = nullify(row['titleType']) or 'other'
+                if raw_title_type not in ALLOWED_TITLE_TYPES:
+                    skipped_type += 1
+                    continue
 
                 runtime_raw = row['runtimeMinutes']
                 runtime_minutes = to_int(runtime_raw)
-
                 if runtime_raw not in (None, '', r'\N') and runtime_minutes is None:
+                    skipped_bad_runtime += 1
                     continue
+
+                title_type_code = TITLE_TYPE_MAP.get(raw_title_type, 99)
+
+                genres = split_csv_field(row['genres'])
+                genre_names.update(genres)
 
                 titles_batch.append(
                     Title(
                         tconst=row['tconst'],
-                        title_type=nullify(row['titleType']) or 'other',
-                        primary_title=nullify(row['primaryTitle']) or '',
+                        title_type=title_type_code,
+                        title=nullify(row['primaryTitle']) or '',
                         is_adult=to_bool(row['isAdult']),
                         start_year=to_int(row['startYear']),
                         end_year=to_int(row['endYear']),
@@ -193,11 +285,13 @@ class Command(BaseCommand):
                     )
                 )
 
-                if len(titles_batch) >= BATCH_SIZE:
+                if len(titles_batch) >= TITLE_BATCH_SIZE:
                     Title.objects.bulk_create(titles_batch, ignore_conflicts=True)
                     count += len(titles_batch)
-                    self.stdout.write(f'Imported titles: {count}')
                     titles_batch = []
+                    self.stdout.write(
+                        f'Imported titles: {count}, skipped by type: {skipped_type}, skipped bad runtime: {skipped_bad_runtime}'
+                    )
 
         if titles_batch:
             Title.objects.bulk_create(titles_batch, ignore_conflicts=True)
@@ -210,7 +304,8 @@ class Command(BaseCommand):
             Genre.objects.bulk_create(new_genres, ignore_conflicts=True)
 
         self.stdout.write('Linking titles and genres...')
-        genre_map = {g.name: g for g in Genre.objects.all()}
+        genre_map = dict(Genre.objects.values_list('name', 'id'))
+        title_id_map = dict(Title.objects.values_list('tconst', 'id'))
 
         through_model = Title.genres.through
         relations_batch = []
@@ -220,19 +315,31 @@ class Command(BaseCommand):
             reader = csv.DictReader(f, delimiter='\t')
 
             for row in reader:
-                tconst = row['tconst']
+                raw_title_type = nullify(row['titleType']) or 'other'
+                if raw_title_type not in ALLOWED_TITLE_TYPES:
+                    continue
+
+                runtime_raw = row['runtimeMinutes']
+                runtime_minutes = to_int(runtime_raw)
+                if runtime_raw not in (None, '', r'\N') and runtime_minutes is None:
+                    continue
+
+                title_pk = title_id_map.get(row['tconst'])
+                if not title_pk:
+                    continue
+
                 for genre_name in split_csv_field(row['genres']):
-                    genre = genre_map.get(genre_name)
-                    if genre:
+                    genre_id = genre_map.get(genre_name)
+                    if genre_id:
                         relations_batch.append(
-                            through_model(title_id=tconst, genre_id=genre.id)
+                            through_model(title_id=title_pk, genre_id=genre_id)
                         )
 
-                if len(relations_batch) >= BATCH_SIZE * 5:
+                if len(relations_batch) >= RELATION_BATCH_SIZE:
                     through_model.objects.bulk_create(relations_batch, ignore_conflicts=True)
                     rel_count += len(relations_batch)
-                    self.stdout.write(f'Linked title-genre rows: {rel_count}')
                     relations_batch = []
+                    self.stdout.write(f'Linked title-genre rows: {rel_count}')
 
         if relations_batch:
             through_model.objects.bulk_create(relations_batch, ignore_conflicts=True)
@@ -240,7 +347,8 @@ class Command(BaseCommand):
 
         self.stdout.write(
             self.style.SUCCESS(
-                f'Titles imported: {count}, title-genre links: {rel_count}'
+                f'Titles imported: {count}, title-genre links: {rel_count}, '
+                f'skipped by type: {skipped_type}, skipped bad runtime: {skipped_bad_runtime}'
             )
         )
 
@@ -249,53 +357,54 @@ class Command(BaseCommand):
 
         ratings_batch = []
         count = 0
+        skipped_missing_title = 0
+
+        title_id_map = dict(Title.objects.values_list('tconst', 'id'))
 
         with self.open_file(filepath) as f:
-            start_from = Rating.objects.count()
-            header_line = next(f).rstrip('\n')
-            fieldnames = header_line.split('\t')
-
-            skipped_iter = islice(f, start_from - 1, None)
-
-            reader = csv.DictReader(
-                skipped_iter,
-                delimiter='\t',
-                fieldnames=fieldnames,
-            )
+            reader = csv.DictReader(f, delimiter='\t')
 
             for row in reader:
-                if row['tconst'] in {'tt12149332', 'tt27404292', 'tt28535095', 'tt3984412'}:
+                title_id = title_id_map.get(row['tconst'])
+                if not title_id:
+                    skipped_missing_title += 1
                     continue
 
                 ratings_batch.append(
                     Rating(
-                        title_id=row['tconst'],
-                        average_rating=nullify(row['averageRating']),
+                        title_id=title_id,
+                        average_rating_tenths=rating_to_tenths(row['averageRating']),
                         num_votes=to_int(row['numVotes']) or 0,
                     )
                 )
 
-                if len(ratings_batch) >= BATCH_SIZE:
+                if len(ratings_batch) >= RATING_BATCH_SIZE:
                     Rating.objects.bulk_create(
                         ratings_batch,
                         update_conflicts=True,
-                        update_fields=['average_rating', 'num_votes'],
+                        update_fields=['average_rating_tenths', 'num_votes'],
                         unique_fields=['title'],
                     )
                     count += len(ratings_batch)
-                    self.stdout.write(f'Imported ratings: {count}')
                     ratings_batch = []
+                    self.stdout.write(
+                        f'Imported ratings: {count}, skipped missing title: {skipped_missing_title}'
+                    )
 
         if ratings_batch:
             Rating.objects.bulk_create(
                 ratings_batch,
                 update_conflicts=True,
-                update_fields=['average_rating', 'num_votes'],
+                update_fields=['average_rating_tenths', 'num_votes'],
                 unique_fields=['title'],
             )
             count += len(ratings_batch)
 
-        self.stdout.write(self.style.SUCCESS(f'Ratings imported: {count}'))
+        self.stdout.write(
+            self.style.SUCCESS(
+                f'Ratings imported: {count}, skipped missing title: {skipped_missing_title}'
+            )
+        )
 
     def import_persons(self, filepath: Path):
         self.stdout.write(f'Importing persons from {filepath.name}')
@@ -307,21 +416,24 @@ class Command(BaseCommand):
             reader = csv.DictReader(f, delimiter='\t')
 
             for row in reader:
+                professions = split_csv_field(row['primaryProfession'])
+                professions_text = ','.join(professions) if professions else None
+
                 persons_batch.append(
                     Person(
                         nconst=row['nconst'],
-                        primary_name=nullify(row['primaryName']) or '',
+                        name=nullify(row['primaryName']) or '',
                         birth_year=to_int(row['birthYear']),
                         death_year=to_int(row['deathYear']),
-                        primary_professions=split_csv_field(row['primaryProfession']),
+                        primary_professions=professions_text,
                     )
                 )
 
-                if len(persons_batch) >= BATCH_SIZE:
+                if len(persons_batch) >= PERSON_BATCH_SIZE:
                     Person.objects.bulk_create(persons_batch, ignore_conflicts=True)
                     count += len(persons_batch)
-                    self.stdout.write(f'Imported persons: {count}')
                     persons_batch = []
+                    self.stdout.write(f'Imported persons: {count}', datetime.datetime)
 
         if persons_batch:
             Person.objects.bulk_create(persons_batch, ignore_conflicts=True)
@@ -332,73 +444,21 @@ class Command(BaseCommand):
     def import_crew(self, filepath: Path):
         self.stdout.write(f'Importing crew from {filepath.name}')
 
-        crew_batch = []
-        count = 0
-
-        valid_titles = set(Title.objects.values_list('tconst', flat=True))
-        valid_persons = set(Person.objects.values_list('nconst', flat=True))
-
-        with self.open_file(filepath) as f:
-            reader = csv.DictReader(f, delimiter='\t')
-
-            for row in reader:
-                tconst = row['tconst']
-                if tconst not in valid_titles:
-                    continue
-
-                for director_id in split_csv_field(row['directors']):
-                    if director_id in valid_persons:
-                        crew_batch.append(
-                            Crew(
-                                title_id=tconst,
-                                person_id=director_id,
-                                role='director',
-                            )
-                        )
-
-                for writer_id in split_csv_field(row['writers']):
-                    if writer_id in valid_persons:
-                        crew_batch.append(
-                            Crew(
-                                title_id=tconst,
-                                person_id=writer_id,
-                                role='writer',
-                            )
-                        )
-
-                if len(crew_batch) >= BATCH_SIZE * 5:
-                    Crew.objects.bulk_create(crew_batch, ignore_conflicts=True)
-                    count += len(crew_batch)
-                    self.stdout.write(f'Imported crew rows: {count}')
-                    crew_batch = []
-
-        if crew_batch:
-            Crew.objects.bulk_create(crew_batch, ignore_conflicts=True)
-            count += len(crew_batch)
-
-        self.stdout.write(self.style.SUCCESS(f'Crew imported: {count}'))
-
-    def import_principals(self, filepath: Path):
-        self.stdout.write(f'Importing principals from {filepath.name}')
-
-        principals_table = Principal._meta.db_table
-        person_table = Person._meta.db_table
+        crew_table = Crew._meta.db_table
         title_table = Title._meta.db_table
+        person_table = Person._meta.db_table
 
-        processed = 0
+        processed_rows = 0
         inserted_total = 0
-        batch_rows = PRINCIPALS_COPY_BATCH_ROWS
+        skipped_empty = 0
 
         with connection.cursor() as cursor:
-            cursor.execute('DROP TABLE IF EXISTS temp_title_principals')
+            cursor.execute('DROP TABLE IF EXISTS temp_crew')
             cursor.execute("""
-                CREATE TEMP TABLE temp_title_principals (
-                    title_id varchar(16),
-                    person_id varchar(16),
-                    ordering_int integer,
-                    category varchar(64),
-                    job varchar(255),
-                    characters_json jsonb
+                CREATE TEMP TABLE temp_crew (
+                    title_tconst varchar(16),
+                    person_nconst varchar(16),
+                    role_code smallint
                 )
             """)
 
@@ -415,8 +475,119 @@ class Command(BaseCommand):
 
             self.copy_text_to_temp_table(
                 '''
-                COPY temp_title_principals
-                (title_id, person_id, ordering_int, category, job, characters_json)
+                COPY temp_crew
+                (title_tconst, person_nconst, role_code)
+                FROM STDIN WITH (FORMAT text, NULL '\\N')
+                ''',
+                payload,
+            )
+
+            with connection.cursor() as cursor:
+                cursor.execute(f'''
+                    INSERT INTO {crew_table}
+                    (title_id, person_id, role)
+                    SELECT
+                        t.id,
+                        p.id,
+                        c.role_code
+                    FROM temp_crew c
+                    INNER JOIN {title_table} t ON t.tconst = c.title_tconst
+                    INNER JOIN {person_table} p ON p.nconst = c.person_nconst
+                    ON CONFLICT DO NOTHING
+                ''')
+                inserted_total += max(cursor.rowcount, 0)
+                cursor.execute('TRUNCATE temp_crew')
+
+            buffer = io.StringIO()
+            rows_in_buffer = 0
+
+        with self.open_file(filepath) as f:
+            reader = csv.DictReader(f, delimiter='\t')
+
+            for row in reader:
+                processed_rows += 1
+
+                title_tconst = row['tconst']
+                directors = split_csv_field(row['directors'])
+                writers = split_csv_field(row['writers'])
+
+                if not directors and not writers:
+                    skipped_empty += 1
+                    continue
+
+                for person_nconst in directors:
+                    buffer.write(
+                        f'{escape_copy_text(title_tconst)}\t'
+                        f'{escape_copy_text(person_nconst)}\t'
+                        f'{CREW_ROLE_MAP["director"]}\n'
+                    )
+                    rows_in_buffer += 1
+
+                for person_nconst in writers:
+                    buffer.write(
+                        f'{escape_copy_text(title_tconst)}\t'
+                        f'{escape_copy_text(person_nconst)}\t'
+                        f'{CREW_ROLE_MAP["writer"]}\n'
+                    )
+                    rows_in_buffer += 1
+
+                if rows_in_buffer >= RELATION_BATCH_SIZE:
+                    flush_buffer()
+                    self.stdout.write(
+                        f'Processed source rows: {processed_rows}, inserted crew rows: {inserted_total}, skipped empty rows: {skipped_empty}'
+                    )
+
+        flush_buffer()
+
+        with connection.cursor() as cursor:
+            cursor.execute('DROP TABLE IF EXISTS temp_crew')
+
+        self.stdout.write(
+            self.style.SUCCESS(
+                f'Crew imported. Processed source rows: {processed_rows}, '
+                f'inserted crew rows: {inserted_total}, skipped empty rows: {skipped_empty}'
+            )
+        )
+
+    def import_principals(self, filepath: Path):
+        self.stdout.write(f'Importing principals from {filepath.name}')
+
+        principals_table = Principal._meta.db_table
+        title_table = Title._meta.db_table
+        person_table = Person._meta.db_table
+
+        processed_rows = 0
+        inserted_total = 0
+        skipped_category = 0
+
+        with connection.cursor() as cursor:
+            cursor.execute('DROP TABLE IF EXISTS temp_principals')
+            cursor.execute("""
+                CREATE TEMP TABLE temp_principals (
+                    title_tconst varchar(16),
+                    person_nconst varchar(16),
+                    ordering_int integer,
+                    category_code smallint,
+                    job varchar(255),
+                    characters_text text
+                )
+            """)
+
+        buffer = io.StringIO()
+        rows_in_buffer = 0
+
+        def flush_buffer():
+            nonlocal buffer, rows_in_buffer, inserted_total
+
+            if rows_in_buffer == 0:
+                return
+
+            payload = buffer.getvalue()
+
+            self.copy_text_to_temp_table(
+                '''
+                COPY temp_principals
+                (title_tconst, person_nconst, ordering_int, category_code, job, characters_text)
                 FROM STDIN WITH (FORMAT text, NULL '\\N')
                 ''',
                 payload,
@@ -427,71 +598,62 @@ class Command(BaseCommand):
                     INSERT INTO {principals_table}
                     (title_id, person_id, ordering, category, job, characters)
                     SELECT
-                        t.title_id,
-                        t.person_id,
-                        t.ordering_int,
-                        t.category,
-                        t.job,
-                        t.characters_json
-                    FROM temp_title_principals t
-                    INNER JOIN {title_table} ti ON ti.tconst = t.title_id
-                    INNER JOIN {person_table} p ON p.nconst = t.person_id
+                        t.id,
+                        p.id,
+                        tp.ordering_int,
+                        tp.category_code,
+                        tp.job,
+                        tp.characters_text
+                    FROM temp_principals tp
+                    INNER JOIN {title_table} t ON t.tconst = tp.title_tconst
+                    INNER JOIN {person_table} p ON p.nconst = tp.person_nconst
                     ON CONFLICT DO NOTHING
                 ''')
                 inserted_total += max(cursor.rowcount, 0)
-                cursor.execute('TRUNCATE temp_title_principals')
+                cursor.execute('TRUNCATE temp_principals')
 
             buffer = io.StringIO()
             rows_in_buffer = 0
 
         with self.open_file(filepath) as f:
             reader = csv.DictReader(f, delimiter='\t')
-            my_count = 89_399_310
-            for row in reader:
-                processed += 1
-                if processed < my_count:
-                    if processed % 1_000_000 == 0:
-                        print(f'skipped {processed}')
-                    continue
 
-                title_id = row['tconst']
-                person_id = row['nconst']
-                ordering_value = to_int(row['ordering']) or 0
-                category = nullify(row['category']) or 'other'
-                job = nullify(row['job'])
-                characters = parse_characters(row['characters'])
+            for row in reader:
+                processed_rows += 1
+
+                category_raw = nullify(row['category']) or 'other'
+                category_code = PRINCIPAL_CATEGORY_MAP.get(category_raw)
+
+                if category_code is None:
+                    skipped_category += 1
+                    category_code = PRINCIPAL_CATEGORY_MAP['other']
+
+                characters_text = parse_characters_text(row['characters'])
 
                 buffer.write(
-                    f'{escape_copy_text(title_id)}\t'
-                    f'{escape_copy_text(person_id)}\t'
-                    f'{ordering_value}\t'
-                    f'{escape_copy_text(category)}\t'
-                    f'{escape_copy_text(job)}\t'
-                    f'{escape_copy_text(json.dumps(characters, ensure_ascii=False) if characters is not None else None)}\n'
+                    f'{escape_copy_text(row["tconst"])}\t'
+                    f'{escape_copy_text(row["nconst"])}\t'
+                    f'{to_int(row["ordering"]) or 0}\t'
+                    f'{category_code}\t'
+                    f'{escape_copy_text(nullify(row["job"]))}\t'
+                    f'{escape_copy_text(characters_text)}\n'
                 )
                 rows_in_buffer += 1
 
-                if rows_in_buffer >= batch_rows:
+                if rows_in_buffer >= RELATION_BATCH_SIZE:
                     flush_buffer()
                     self.stdout.write(
-                        f'Processed rows: {processed}, inserted principals: {inserted_total}, {round(processed / 98694691 * 100, 1)}%'
+                        f'Processed source rows: {processed_rows}, inserted principals: {inserted_total}, skipped unknown category: {skipped_category}'
                     )
-
-                    if processed > 100_000_000:
-                        print('слишком огромная таблица')
-                        return
 
         flush_buffer()
 
         with connection.cursor() as cursor:
-            cursor.execute('DROP TABLE IF EXISTS temp_title_principals')
+            cursor.execute('DROP TABLE IF EXISTS temp_principals')
 
         self.stdout.write(
             self.style.SUCCESS(
-                f'Principals imported. Processed rows: {processed}, inserted: {inserted_total}, {round(processed / 98694691 * 100, 1)}%'
+                f'Principals imported. Processed source rows: {processed_rows}, '
+                f'inserted principals: {inserted_total}, skipped unknown category: {skipped_category}'
             )
         )
-
-        if processed > 100_000_000:
-            print('слишком огромная таблица')
-            return
