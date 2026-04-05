@@ -45,7 +45,7 @@ class Title(models.Model):
     is_adult = models.BooleanField('18+', default=False)
     start_year = models.PositiveSmallIntegerField('Год начала', null=True, blank=True)
     end_year = models.PositiveSmallIntegerField('Год окончания', null=True, blank=True)
-    runtime_minutes = models.PositiveIntegerField('Длительность (мин.)', null=True, blank=True)
+    runtime_minutes = models.PositiveSmallIntegerField('Длительность (мин.)', null=True, blank=True)
     genres = models.ManyToManyField(
         Genre,
         verbose_name='Жанры',
@@ -90,8 +90,8 @@ class Rating(models.Model):
 class Person(models.Model):
     nconst = models.CharField('IMDb ID', max_length=16, primary_key=True)
     name = models.CharField('Имя', max_length=255)
-    birth_year = models.PositiveIntegerField('Год рождения', null=True, blank=True)
-    death_year = models.PositiveIntegerField('Год смерти', null=True, blank=True)
+    birth_year = models.PositiveSmallIntegerField('Год рождения', null=True, blank=True)
+    death_year = models.PositiveSmallIntegerField('Год смерти', null=True, blank=True)
     primary_professions = models.JSONField('Профессии', default=list, blank=True)
 
     class Meta:
