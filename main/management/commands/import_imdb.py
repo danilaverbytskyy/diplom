@@ -1,40 +1,48 @@
 import csv
+import io
 import json
-from itertools import islice
+from itertools import islice, count
 from pathlib import Path
 
 from django.conf import settings
 from django.core.management.base import BaseCommand
+from django.db import connection
 
-from main.models import Genre, Person, Title, TitleCrew, TitlePrincipal, TitleRating
+from main.models import Genre, Person, Title, Crew, Principal, Rating
 
 
-BATCH_SIZE = 20000
+BATCH_SIZE = 30000
+PRINCIPALS_COPY_BATCH_ROWS = 100000
 
 
 def nullify(value: str):
-    if value == r"\N" or value == "":
+    if value in (r'\N', '', None):
         return None
     return value
 
 
 def to_int(value: str):
     value = nullify(value)
-    return int(value) if value is not None else None
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def to_bool(value: str):
     value = nullify(value)
     if value is None:
         return False
-    return value == "1"
+    return value == '1'
 
 
 def split_csv_field(value: str):
     value = nullify(value)
     if value is None:
         return []
-    return [item.strip() for item in value.split(",") if item.strip()]
+    return [item.strip() for item in value.split(',') if item.strip()]
 
 
 def parse_characters(value: str):
@@ -42,105 +50,108 @@ def parse_characters(value: str):
     if value is None:
         return None
 
+    if not (value.startswith('[') and value.endswith(']')):
+        return None
+
     try:
         return json.loads(value)
     except json.JSONDecodeError:
-        return [value]
+        return None
+
+
+def escape_copy_text(value):
+    if value is None:
+        return r'\N'
+
+    return (
+        str(value)
+        .replace('\\', '\\\\')
+        .replace('\t', '\\t')
+        .replace('\n', '\\n')
+        .replace('\r', '\\r')
+    )
 
 
 class Command(BaseCommand):
-    help = "Import IMDb datasets from TSV files"
+    help = 'Import IMDb datasets from TSV files'
 
     def add_arguments(self, parser):
         parser.add_argument(
-            "--path",
+            '--path',
             type=str,
-            default=str(Path(settings.BASE_DIR) / "data" / "imdb"),
-            help="Path to directory with IMDb .tsv files",
+            default=str(Path(settings.BASE_DIR) / 'data' / 'imdb'),
+            help='Path to directory with IMDb .tsv files',
         )
         parser.add_argument(
-            "--skip-titles",
-            action="store_true",
-            help="Skip title.basics import",
+            '--skip-titles',
+            action='store_true',
+            help='Skip title.basics import',
         )
         parser.add_argument(
-            "--skip-ratings",
-            action="store_true",
-            help="Skip title.ratings import",
+            '--skip-ratings',
+            action='store_true',
+            help='Skip title.ratings import',
         )
         parser.add_argument(
-            "--skip-persons",
-            action="store_true",
-            help="Skip name.basics import",
+            '--skip-persons',
+            action='store_true',
+            help='Skip name.basics import',
         )
         parser.add_argument(
-            "--skip-known-for",
-            action="store_true",
-            help="Skip known_for_titles relations import",
+            '--skip-crew',
+            action='store_true',
+            help='Skip title.crew import',
         )
         parser.add_argument(
-            "--skip-crew",
-            action="store_true",
-            help="Skip title.crew import",
+            '--skip-principals',
+            action='store_true',
+            help='Skip title.principals import',
         )
         parser.add_argument(
-            "--skip-principals",
-            action="store_true",
-            help="Skip title.principals import",
-        )
-        parser.add_argument(
-            "--truncate",
-            action="store_true",
-            help="Delete existing data before import",
+            '--truncate',
+            action='store_true',
+            help='Delete existing data before import',
         )
 
     def handle(self, *args, **options):
-        base_path = Path(options["path"])
+        base_path = Path(options['path'])
 
         if not base_path.exists():
-            self.stderr.write(self.style.ERROR(f"Directory does not exist: {base_path}"))
+            self.stderr.write(self.style.ERROR(f'Directory does not exist: {base_path}'))
             return
 
-        # if options["truncate"]:
-        #     self.truncate_tables()
+        # self.import_crew(base_path / 'title.crew.tsv')
 
-        # if not options["skip_titles"]:
-        #     self.import_titles(base_path / "title.basics.tsv")
+        if not options['skip_principals']:
+            self.import_principals(base_path / 'title.principals.tsv')
 
-        # if not options["skip_ratings"]:
-        #     self.import_ratings(base_path / "title.ratings.tsv")
-
-        if not options["skip_persons"]:
-            self.import_persons(base_path / "name.basics.tsv")
-
-        if not options["skip_known_for"]:
-            self.import_known_for_titles(base_path / "name.basics.tsv")
-
-        # if not options["skip_crew"]:
-        #     self.import_crew(base_path / "title.crew.tsv")
-
-        if not options["skip_principals"]:
-            self.import_principals(base_path / "title.principals.tsv")
-
-        self.stdout.write(self.style.SUCCESS("IMDb import completed"))
+        self.stdout.write(self.style.SUCCESS('IMDb import completed'))
 
     def truncate_tables(self):
-        self.stdout.write("Deleting existing data...")
+        self.stdout.write('Deleting existing data...')
 
-        TitlePrincipal.objects.all().delete()
-        TitleCrew.objects.all().delete()
-        TitleRating.objects.all().delete()
+        Principal.objects.all().delete()
+        Crew.objects.all().delete()
+        Rating.objects.all().delete()
         Person.objects.all().delete()
         Title.objects.all().delete()
         Genre.objects.all().delete()
 
-        self.stdout.write(self.style.SUCCESS("Existing data deleted"))
+        self.stdout.write(self.style.SUCCESS('Existing data deleted'))
 
     def open_file(self, filepath: Path):
-        return open(filepath, mode="rt", encoding="utf-8")
+        return open(filepath, mode='rt', encoding='utf-8')
+
+    def copy_text_to_temp_table(self, copy_sql: str, payload: str):
+        connection.ensure_connection()
+        raw_conn = connection.connection
+
+        with raw_conn.cursor() as cur:
+            with cur.copy(copy_sql) as copy:
+                copy.write(payload)
 
     def import_titles(self, filepath: Path):
-        self.stdout.write(f"Importing titles from {filepath.name}")
+        self.stdout.write(f'Importing titles from {filepath.name}')
 
         genre_names = set()
         titles_batch = []
@@ -161,25 +172,23 @@ class Command(BaseCommand):
             )
 
             for row in reader:
-                genres = split_csv_field(row["genres"])
+                genres = split_csv_field(row['genres'])
                 genre_names.update(genres)
 
-                runtime_raw = row["runtimeMinutes"]
+                runtime_raw = row['runtimeMinutes']
+                runtime_minutes = to_int(runtime_raw)
 
-                try:
-                    runtime_minutes = int(runtime_raw) if runtime_raw != r"\N" else None
-                except ValueError:
+                if runtime_raw not in (None, '', r'\N') and runtime_minutes is None:
                     continue
 
                 titles_batch.append(
                     Title(
-                        tconst=row["tconst"],
-                        title_type=nullify(row["titleType"]) or "other",
-                        primary_title=nullify(row["primaryTitle"]) or "",
-                        original_title=nullify(row["originalTitle"]) or "",
-                        is_adult=to_bool(row["isAdult"]),
-                        start_year=to_int(row["startYear"]),
-                        end_year=to_int(row["endYear"]),
+                        tconst=row['tconst'],
+                        title_type=nullify(row['titleType']) or 'other',
+                        primary_title=nullify(row['primaryTitle']) or '',
+                        is_adult=to_bool(row['isAdult']),
+                        start_year=to_int(row['startYear']),
+                        end_year=to_int(row['endYear']),
                         runtime_minutes=runtime_minutes,
                     )
                 )
@@ -187,19 +196,20 @@ class Command(BaseCommand):
                 if len(titles_batch) >= BATCH_SIZE:
                     Title.objects.bulk_create(titles_batch, ignore_conflicts=True)
                     count += len(titles_batch)
-                    self.stdout.write(f"Imported titles: {count}")
+                    self.stdout.write(f'Imported titles: {count}')
                     titles_batch = []
 
         if titles_batch:
             Title.objects.bulk_create(titles_batch, ignore_conflicts=True)
             count += len(titles_batch)
 
-        self.stdout.write("Creating genres...")
-        existing_genres = set(Genre.objects.values_list("name", flat=True))
+        self.stdout.write('Creating genres...')
+        existing_genres = set(Genre.objects.values_list('name', flat=True))
         new_genres = [Genre(name=name) for name in genre_names if name not in existing_genres]
-        Genre.objects.bulk_create(new_genres, ignore_conflicts=True)
+        if new_genres:
+            Genre.objects.bulk_create(new_genres, ignore_conflicts=True)
 
-        self.stdout.write("Linking titles and genres...")
+        self.stdout.write('Linking titles and genres...')
         genre_map = {g.name: g for g in Genre.objects.all()}
 
         through_model = Title.genres.through
@@ -207,11 +217,11 @@ class Command(BaseCommand):
         rel_count = 0
 
         with self.open_file(filepath) as f:
-            reader = csv.DictReader(f, delimiter="\t")
+            reader = csv.DictReader(f, delimiter='\t')
 
             for row in reader:
-                tconst = row["tconst"]
-                for genre_name in split_csv_field(row["genres"]):
+                tconst = row['tconst']
+                for genre_name in split_csv_field(row['genres']):
                     genre = genre_map.get(genre_name)
                     if genre:
                         relations_batch.append(
@@ -221,23 +231,27 @@ class Command(BaseCommand):
                 if len(relations_batch) >= BATCH_SIZE * 5:
                     through_model.objects.bulk_create(relations_batch, ignore_conflicts=True)
                     rel_count += len(relations_batch)
-                    self.stdout.write(f"Linked title-genre rows: {rel_count}")
+                    self.stdout.write(f'Linked title-genre rows: {rel_count}')
                     relations_batch = []
 
         if relations_batch:
             through_model.objects.bulk_create(relations_batch, ignore_conflicts=True)
             rel_count += len(relations_batch)
 
-        self.stdout.write(self.style.SUCCESS(f"Titles imported: {count}, title-genre links: {rel_count}"))
+        self.stdout.write(
+            self.style.SUCCESS(
+                f'Titles imported: {count}, title-genre links: {rel_count}'
+            )
+        )
 
     def import_ratings(self, filepath: Path):
-        self.stdout.write(f"Importing ratings from {filepath.name}")
+        self.stdout.write(f'Importing ratings from {filepath.name}')
 
         ratings_batch = []
         count = 0
 
         with self.open_file(filepath) as f:
-            start_from = TitleRating.objects.count()
+            start_from = Rating.objects.count()
             header_line = next(f).rstrip('\n')
             fieldnames = header_line.split('\t')
 
@@ -248,198 +262,236 @@ class Command(BaseCommand):
                 delimiter='\t',
                 fieldnames=fieldnames,
             )
+
             for row in reader:
-                if row["tconst"] in {'tt12149332', 'tt27404292', 'tt28535095', 'tt3984412'}:
+                if row['tconst'] in {'tt12149332', 'tt27404292', 'tt28535095', 'tt3984412'}:
                     continue
 
                 ratings_batch.append(
-                    TitleRating(
-                        title_id=row["tconst"],
-                        average_rating=nullify(row["averageRating"]),
-                        num_votes=to_int(row["numVotes"]) or 0,
+                    Rating(
+                        title_id=row['tconst'],
+                        average_rating=nullify(row['averageRating']),
+                        num_votes=to_int(row['numVotes']) or 0,
                     )
                 )
 
                 if len(ratings_batch) >= BATCH_SIZE:
-                    TitleRating.objects.bulk_create(
+                    Rating.objects.bulk_create(
                         ratings_batch,
                         update_conflicts=True,
-                        update_fields=["average_rating", "num_votes"],
-                        unique_fields=["title"],
+                        update_fields=['average_rating', 'num_votes'],
+                        unique_fields=['title'],
                     )
                     count += len(ratings_batch)
-                    self.stdout.write(f"Imported ratings: {count}")
+                    self.stdout.write(f'Imported ratings: {count}')
                     ratings_batch = []
 
         if ratings_batch:
-            TitleRating.objects.bulk_create(
+            Rating.objects.bulk_create(
                 ratings_batch,
-                ignore_conflicts=True,
                 update_conflicts=True,
-                update_fields=["average_rating", "num_votes"],
-                unique_fields=["title"],
+                update_fields=['average_rating', 'num_votes'],
+                unique_fields=['title'],
             )
             count += len(ratings_batch)
 
-        self.stdout.write(self.style.SUCCESS(f"Ratings imported: {count}"))
+        self.stdout.write(self.style.SUCCESS(f'Ratings imported: {count}'))
 
     def import_persons(self, filepath: Path):
-        self.stdout.write(f"Importing persons from {filepath.name}")
+        self.stdout.write(f'Importing persons from {filepath.name}')
 
         persons_batch = []
         count = 0
 
         with self.open_file(filepath) as f:
-            reader = csv.DictReader(f, delimiter="\t")
+            reader = csv.DictReader(f, delimiter='\t')
 
             for row in reader:
                 persons_batch.append(
                     Person(
-                        nconst=row["nconst"],
-                        primary_name=nullify(row["primaryName"]) or "",
-                        birth_year=to_int(row["birthYear"]),
-                        death_year=to_int(row["deathYear"]),
-                        primary_professions=split_csv_field(row["primaryProfession"]),
+                        nconst=row['nconst'],
+                        primary_name=nullify(row['primaryName']) or '',
+                        birth_year=to_int(row['birthYear']),
+                        death_year=to_int(row['deathYear']),
+                        primary_professions=split_csv_field(row['primaryProfession']),
                     )
                 )
 
                 if len(persons_batch) >= BATCH_SIZE:
                     Person.objects.bulk_create(persons_batch, ignore_conflicts=True)
                     count += len(persons_batch)
-                    self.stdout.write(f"Imported persons: {count}")
+                    self.stdout.write(f'Imported persons: {count}')
                     persons_batch = []
 
         if persons_batch:
             Person.objects.bulk_create(persons_batch, ignore_conflicts=True)
             count += len(persons_batch)
 
-        self.stdout.write(self.style.SUCCESS(f"Persons imported: {count}"))
-
-    def import_known_for_titles(self, filepath: Path):
-        self.stdout.write(f"Importing known_for_titles from {filepath.name}")
-
-        through_model = Person.known_for_titles.through
-        relations_batch = []
-        count = 0
-
-        valid_titles = set(Title.objects.values_list("tconst", flat=True))
-        valid_persons = set(Person.objects.values_list("nconst", flat=True))
-
-        with self.open_file(filepath) as f:
-            reader = csv.DictReader(f, delimiter="\t")
-
-            for row in reader:
-                nconst = row["nconst"]
-
-                if nconst not in valid_persons:
-                    continue
-
-                title_ids = split_csv_field(row["knownForTitles"])
-                for tconst in title_ids:
-                    if tconst in valid_titles:
-                        relations_batch.append(
-                            through_model(person_id=nconst, title_id=tconst)
-                        )
-
-                if len(relations_batch) >= BATCH_SIZE * 5:
-                    through_model.objects.bulk_create(relations_batch, ignore_conflicts=True)
-                    count += len(relations_batch)
-                    self.stdout.write(f"Imported known_for links: {count}")
-                    relations_batch = []
-
-        if relations_batch:
-            through_model.objects.bulk_create(relations_batch, ignore_conflicts=True)
-            count += len(relations_batch)
-
-        self.stdout.write(self.style.SUCCESS(f"Known-for links imported: {count}"))
+        self.stdout.write(self.style.SUCCESS(f'Persons imported: {count}'))
 
     def import_crew(self, filepath: Path):
-        self.stdout.write(f"Importing crew from {filepath.name}")
+        self.stdout.write(f'Importing crew from {filepath.name}')
 
         crew_batch = []
         count = 0
 
-        valid_titles = set(Title.objects.values_list("tconst", flat=True))
-        valid_persons = set(Person.objects.values_list("nconst", flat=True))
+        valid_titles = set(Title.objects.values_list('tconst', flat=True))
+        valid_persons = set(Person.objects.values_list('nconst', flat=True))
 
         with self.open_file(filepath) as f:
-            reader = csv.DictReader(f, delimiter="\t")
+            reader = csv.DictReader(f, delimiter='\t')
 
             for row in reader:
-                tconst = row["tconst"]
+                tconst = row['tconst']
                 if tconst not in valid_titles:
                     continue
 
-                for director_id in split_csv_field(row["directors"]):
+                for director_id in split_csv_field(row['directors']):
                     if director_id in valid_persons:
                         crew_batch.append(
-                            TitleCrew(
+                            Crew(
                                 title_id=tconst,
                                 person_id=director_id,
-                                role="director",
+                                role='director',
                             )
                         )
 
-                for writer_id in split_csv_field(row["writers"]):
+                for writer_id in split_csv_field(row['writers']):
                     if writer_id in valid_persons:
                         crew_batch.append(
-                            TitleCrew(
+                            Crew(
                                 title_id=tconst,
                                 person_id=writer_id,
-                                role="writer",
+                                role='writer',
                             )
                         )
 
                 if len(crew_batch) >= BATCH_SIZE * 5:
-                    TitleCrew.objects.bulk_create(crew_batch, ignore_conflicts=True)
+                    Crew.objects.bulk_create(crew_batch, ignore_conflicts=True)
                     count += len(crew_batch)
-                    self.stdout.write(f"Imported crew rows: {count}")
+                    self.stdout.write(f'Imported crew rows: {count}')
                     crew_batch = []
 
         if crew_batch:
-            TitleCrew.objects.bulk_create(crew_batch, ignore_conflicts=True)
+            Crew.objects.bulk_create(crew_batch, ignore_conflicts=True)
             count += len(crew_batch)
 
-        self.stdout.write(self.style.SUCCESS(f"Crew imported: {count}"))
+        self.stdout.write(self.style.SUCCESS(f'Crew imported: {count}'))
 
     def import_principals(self, filepath: Path):
-        self.stdout.write(f"Importing principals from {filepath.name}")
+        self.stdout.write(f'Importing principals from {filepath.name}')
 
-        principals_batch = []
-        count = 0
+        principals_table = Principal._meta.db_table
+        person_table = Person._meta.db_table
+        title_table = Title._meta.db_table
 
-        valid_titles = set(Title.objects.values_list("tconst", flat=True))
-        valid_persons = set(Person.objects.values_list("nconst", flat=True))
+        processed = 0
+        inserted_total = 0
+        batch_rows = PRINCIPALS_COPY_BATCH_ROWS
+
+        with connection.cursor() as cursor:
+            cursor.execute('DROP TABLE IF EXISTS temp_title_principals')
+            cursor.execute("""
+                CREATE TEMP TABLE temp_title_principals (
+                    title_id varchar(16),
+                    person_id varchar(16),
+                    ordering_int integer,
+                    category varchar(64),
+                    job varchar(255),
+                    characters_json jsonb
+                )
+            """)
+
+        buffer = io.StringIO()
+        rows_in_buffer = 0
+
+        def flush_buffer():
+            nonlocal buffer, rows_in_buffer, inserted_total
+
+            if rows_in_buffer == 0:
+                return
+
+            payload = buffer.getvalue()
+
+            self.copy_text_to_temp_table(
+                '''
+                COPY temp_title_principals
+                (title_id, person_id, ordering_int, category, job, characters_json)
+                FROM STDIN WITH (FORMAT text, NULL '\\N')
+                ''',
+                payload,
+            )
+
+            with connection.cursor() as cursor:
+                cursor.execute(f'''
+                    INSERT INTO {principals_table}
+                    (title_id, person_id, ordering, category, job, characters)
+                    SELECT
+                        t.title_id,
+                        t.person_id,
+                        t.ordering_int,
+                        t.category,
+                        t.job,
+                        t.characters_json
+                    FROM temp_title_principals t
+                    INNER JOIN {title_table} ti ON ti.tconst = t.title_id
+                    INNER JOIN {person_table} p ON p.nconst = t.person_id
+                    ON CONFLICT DO NOTHING
+                ''')
+                inserted_total += max(cursor.rowcount, 0)
+                cursor.execute('TRUNCATE temp_title_principals')
+
+            buffer = io.StringIO()
+            rows_in_buffer = 0
 
         with self.open_file(filepath) as f:
-            reader = csv.DictReader(f, delimiter="\t")
-
+            reader = csv.DictReader(f, delimiter='\t')
+            my_count = 89_399_310
             for row in reader:
-                tconst = row["tconst"]
-                nconst = row["nconst"]
-
-                if tconst not in valid_titles or nconst not in valid_persons:
+                processed += 1
+                if processed < my_count:
+                    if processed % 1_000_000 == 0:
+                        print(f'skipped {processed}')
                     continue
 
-                principals_batch.append(
-                    TitlePrincipal(
-                        title_id=tconst,
-                        person_id=nconst,
-                        ordering=to_int(row["ordering"]) or 0,
-                        category=nullify(row["category"]) or "other",
-                        job=nullify(row["job"]),
-                        characters=parse_characters(row["characters"]),
-                    )
+                title_id = row['tconst']
+                person_id = row['nconst']
+                ordering_value = to_int(row['ordering']) or 0
+                category = nullify(row['category']) or 'other'
+                job = nullify(row['job'])
+                characters = parse_characters(row['characters'])
+
+                buffer.write(
+                    f'{escape_copy_text(title_id)}\t'
+                    f'{escape_copy_text(person_id)}\t'
+                    f'{ordering_value}\t'
+                    f'{escape_copy_text(category)}\t'
+                    f'{escape_copy_text(job)}\t'
+                    f'{escape_copy_text(json.dumps(characters, ensure_ascii=False) if characters is not None else None)}\n'
                 )
+                rows_in_buffer += 1
 
-                if len(principals_batch) >= BATCH_SIZE:
-                    TitlePrincipal.objects.bulk_create(principals_batch, ignore_conflicts=True)
-                    count += len(principals_batch)
-                    self.stdout.write(f"Imported principals: {count}")
-                    principals_batch = []
+                if rows_in_buffer >= batch_rows:
+                    flush_buffer()
+                    self.stdout.write(
+                        f'Processed rows: {processed}, inserted principals: {inserted_total}, {round(processed / 98694691 * 100, 1)}%'
+                    )
 
-        if principals_batch:
-            TitlePrincipal.objects.bulk_create(principals_batch, ignore_conflicts=True)
-            count += len(principals_batch)
+                    if processed > 100_000_000:
+                        print('слишком огромная таблица')
+                        return
 
-        self.stdout.write(self.style.SUCCESS(f"Principals imported: {count}"))
+        flush_buffer()
+
+        with connection.cursor() as cursor:
+            cursor.execute('DROP TABLE IF EXISTS temp_title_principals')
+
+        self.stdout.write(
+            self.style.SUCCESS(
+                f'Principals imported. Processed rows: {processed}, inserted: {inserted_total}, {round(processed / 98694691 * 100, 1)}%'
+            )
+        )
+
+        if processed > 100_000_000:
+            print('слишком огромная таблица')
+            return
