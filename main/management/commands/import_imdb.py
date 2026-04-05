@@ -198,20 +198,20 @@ class Command(BaseCommand):
             self.stderr.write(self.style.ERROR(f'Directory does not exist: {base_path}'))
             return
 
-        if options['truncate']:
-            self.truncate_tables()
-
-        if not options['skip_titles']:
-            self.import_titles(base_path / 'title.basics.tsv')
-
-        if not options['skip_ratings']:
-            self.import_ratings(base_path / 'title.ratings.tsv')
-
-        if not options['skip_persons']:
-            self.import_persons(base_path / 'name.basics.tsv')
-
-        if not options['skip_crew']:
-            self.import_crew(base_path / 'title.crew.tsv')
+        # if options['truncate']:
+        #     self.truncate_tables()
+        #
+        # if not options['skip_titles']:
+        #     self.import_titles(base_path / 'title.basics.tsv')
+        #
+        # if not options['skip_ratings']:
+        #     self.import_ratings(base_path / 'title.ratings.tsv')
+        #
+        # if not options['skip_persons']:
+        #     self.import_persons(base_path / 'name.basics.tsv')
+        #
+        # if not options['skip_crew']:
+        #     self.import_crew(base_path / 'title.crew.tsv')
 
         if not options['skip_principals']:
             self.import_principals(base_path / 'title.principals.tsv')
@@ -433,7 +433,7 @@ class Command(BaseCommand):
                     Person.objects.bulk_create(persons_batch, ignore_conflicts=True)
                     count += len(persons_batch)
                     persons_batch = []
-                    self.stdout.write(f'Imported persons: {count}', datetime.datetime)
+                    self.stdout.write(f'Imported persons: {count}')
 
         if persons_batch:
             Person.objects.bulk_create(persons_batch, ignore_conflicts=True)
@@ -559,6 +559,7 @@ class Command(BaseCommand):
         processed_rows = 0
         inserted_total = 0
         skipped_category = 0
+        truncated_job = 0
 
         with connection.cursor() as cursor:
             cursor.execute('DROP TABLE IF EXISTS temp_principals')
@@ -630,12 +631,17 @@ class Command(BaseCommand):
 
                 characters_text = parse_characters_text(row['characters'])
 
+                job = nullify(row['job'])
+                if job is not None and len(job) > 255:
+                    truncated_job += 1
+                    job = job[:255]
+
                 buffer.write(
                     f'{escape_copy_text(row["tconst"])}\t'
                     f'{escape_copy_text(row["nconst"])}\t'
                     f'{to_int(row["ordering"]) or 0}\t'
                     f'{category_code}\t'
-                    f'{escape_copy_text(nullify(row["job"]))}\t'
+                    f'{escape_copy_text(job)}\t'
                     f'{escape_copy_text(characters_text)}\n'
                 )
                 rows_in_buffer += 1
@@ -643,7 +649,8 @@ class Command(BaseCommand):
                 if rows_in_buffer >= RELATION_BATCH_SIZE:
                     flush_buffer()
                     self.stdout.write(
-                        f'Processed source rows: {processed_rows}, inserted principals: {inserted_total}, skipped unknown category: {skipped_category}'
+                        f'Processed source rows: {processed_rows}, inserted principals: {inserted_total}, '
+                        f'skipped unknown category: {skipped_category}, truncated job: {truncated_job}'
                     )
 
         flush_buffer()
@@ -654,6 +661,7 @@ class Command(BaseCommand):
         self.stdout.write(
             self.style.SUCCESS(
                 f'Principals imported. Processed source rows: {processed_rows}, '
-                f'inserted principals: {inserted_total}, skipped unknown category: {skipped_category}'
+                f'inserted principals: {inserted_total}, skipped unknown category: {skipped_category}, '
+                f'truncated job: {truncated_job}'
             )
         )
