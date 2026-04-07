@@ -1,19 +1,18 @@
 from django.db.models import Avg, Count, Q
-from django.shortcuts import get_object_or_404
+from django.shortcuts import get_object_or_404, redirect, render
+from django.views.decorators.http import require_http_methods
 from rest_framework import generics
 from rest_framework.pagination import PageNumberPagination
-from rest_framework.response import Response
 from rest_framework.views import APIView
-from django.shortcuts import redirect, render
-from django.views.decorators.http import require_http_methods
 
-from main.models import Crew, Genre, Person, Principal, Title
+from main.models import Genre, Person, Title
 from main.serializers import (
     PersonFullSerializer,
     TitleFullSerializer,
     TitleListSerializer,
 )
 from cache.instance import cache
+from cache.mixins import CacheResponseMixin
 
 
 class TitlePagination(PageNumberPagination):
@@ -67,9 +66,11 @@ def home_page(request):
     return render(request, 'main/main.html', context)
 
 
-class TitleListView(generics.ListAPIView):
+class TitleListView(CacheResponseMixin, generics.ListAPIView):
     serializer_class = TitleListSerializer
     pagination_class = TitlePagination
+    cache_prefix = 'titles:list'
+    cache_ttl = 300
 
     def get_queryset(self):
         queryset = Title.objects.all()
@@ -105,48 +106,30 @@ class TitleListView(generics.ListAPIView):
         return queryset
 
     def build_cache_key(self) -> str:
-        params = self.request.query_params
-        parts = []
+        return f'{self.cache_prefix}:{self._query_params_key()}'
 
-        for key in sorted(params.keys()):
-            parts.append(f'{key}={params.get(key)}')
+    def get_cached_data(self):
+        queryset = self.get_queryset()
+        page = self.paginate_queryset(queryset)
 
-        if not parts:
-            return 'titles:list'
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return {
+                'count': self.paginator.page.paginator.count,
+                'next': self.paginator.get_next_link(),
+                'previous': self.paginator.get_previous_link(),
+                'results': serializer.data,
+            }
 
-        return f'titles:list:{"|".join(parts)}'
-
-    def list(self, request, *args, **kwargs):
-        cache_key = self.build_cache_key()
-
-        def factory():
-            queryset = self.get_queryset()
-            page = self.paginate_queryset(queryset)
-
-            if page is not None:
-                serializer = self.get_serializer(page, many=True)
-                return {
-                    'count': self.paginator.page.paginator.count,
-                    'next': self.paginator.get_next_link(),
-                    'previous': self.paginator.get_previous_link(),
-                    'results': serializer.data,
-                }
-
-            serializer = self.get_serializer(queryset, many=True)
-            return serializer.data
-
-        data = cache.get_or_set(
-            key=cache_key,
-            factory=factory,
-            ttl=300,
-        )
-
-        return Response(data)
+        serializer = self.get_serializer(queryset, many=True)
+        return serializer.data
 
 
-class TopTitlesView(generics.ListAPIView):
+class TopTitlesView(CacheResponseMixin, generics.ListAPIView):
     serializer_class = TitleListSerializer
     pagination_class = TitlePagination
+    cache_prefix = 'titles:top'
+    cache_ttl = 300
 
     def get_queryset(self):
         min_votes = self.request.query_params.get('min_votes', 10000)
@@ -164,10 +147,31 @@ class TopTitlesView(generics.ListAPIView):
 
         return queryset.order_by('-rating__average_rating_tenths', '-rating__num_votes', 'id')
 
+    def build_cache_key(self) -> str:
+        return f'{self.cache_prefix}:{self._query_params_key()}'
 
-class TitleSearchView(generics.ListAPIView):
+    def get_cached_data(self):
+        queryset = self.get_queryset()
+        page = self.paginate_queryset(queryset)
+
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return {
+                'count': self.paginator.page.paginator.count,
+                'next': self.paginator.get_next_link(),
+                'previous': self.paginator.get_previous_link(),
+                'results': serializer.data,
+            }
+
+        serializer = self.get_serializer(queryset, many=True)
+        return serializer.data
+
+
+class TitleSearchView(CacheResponseMixin, generics.ListAPIView):
     serializer_class = TitleListSerializer
     pagination_class = TitlePagination
+    cache_prefix = 'titles:search'
+    cache_ttl = 300
 
     def get_queryset(self):
         query = self.request.query_params.get('q', '').strip()
@@ -198,16 +202,47 @@ class TitleSearchView(generics.ListAPIView):
 
         return queryset
 
+    def build_cache_key(self) -> str:
+        return f'{self.cache_prefix}:{self._query_params_key()}'
 
-class TitleDetailView(APIView):
-    def get(self, request, tconst):
-        obj = get_object_or_404(Title, tconst=tconst)
+    def get_cached_data(self):
+        queryset = self.get_queryset()
+        page = self.paginate_queryset(queryset)
+
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return {
+                'count': self.paginator.page.paginator.count,
+                'next': self.paginator.get_next_link(),
+                'previous': self.paginator.get_previous_link(),
+                'results': serializer.data,
+            }
+
+        serializer = self.get_serializer(queryset, many=True)
+        return serializer.data
+
+
+class TitleDetailView(CacheResponseMixin, APIView):
+    cache_prefix = 'title:detail'
+    cache_ttl = 600
+
+    def build_cache_key(self) -> str:
+        return f'{self.cache_prefix}:{self.kwargs["tconst"]}'
+
+    def get_cached_data(self):
+        obj = get_object_or_404(Title, tconst=self.kwargs['tconst'])
         serializer = TitleListSerializer(obj)
-        return Response(serializer.data)
+        return serializer.data
 
 
-class TitleFullDetailView(APIView):
-    def get(self, request, tconst):
+class TitleFullDetailView(CacheResponseMixin, APIView):
+    cache_prefix = 'title:full'
+    cache_ttl = 600
+
+    def build_cache_key(self) -> str:
+        return f'{self.cache_prefix}:{self.kwargs["tconst"]}'
+
+    def get_cached_data(self):
         obj = get_object_or_404(
             Title.objects
             .select_related('rating')
@@ -216,15 +251,17 @@ class TitleFullDetailView(APIView):
                 'crew_members__person',
                 'principals__person',
             ),
-            tconst=tconst,
+            tconst=self.kwargs['tconst'],
         )
         serializer = TitleFullSerializer(obj)
-        return Response(serializer.data)
+        return serializer.data
 
 
-class TitleDiscoverView(generics.ListAPIView):
+class TitleDiscoverView(CacheResponseMixin, generics.ListAPIView):
     serializer_class = TitleListSerializer
     pagination_class = TitlePagination
+    cache_prefix = 'titles:discover'
+    cache_ttl = 300
 
     def get_queryset(self):
         queryset = (
@@ -274,22 +311,53 @@ class TitleDiscoverView(generics.ListAPIView):
 
         return queryset.distinct()
 
+    def build_cache_key(self) -> str:
+        return f'{self.cache_prefix}:{self._query_params_key()}'
 
-class PersonFullDetailView(APIView):
-    def get(self, request, nconst):
+    def get_cached_data(self):
+        queryset = self.get_queryset()
+        page = self.paginate_queryset(queryset)
+
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return {
+                'count': self.paginator.page.paginator.count,
+                'next': self.paginator.get_next_link(),
+                'previous': self.paginator.get_previous_link(),
+                'results': serializer.data,
+            }
+
+        serializer = self.get_serializer(queryset, many=True)
+        return serializer.data
+
+
+class PersonFullDetailView(CacheResponseMixin, APIView):
+    cache_prefix = 'person:full'
+    cache_ttl = 600
+
+    def build_cache_key(self) -> str:
+        return f'{self.cache_prefix}:{self.kwargs["nconst"]}'
+
+    def get_cached_data(self):
         obj = get_object_or_404(
             Person.objects.prefetch_related(
                 'principal_titles__title__rating',
                 'crew_titles__title__rating',
             ),
-            nconst=nconst,
+            nconst=self.kwargs['nconst'],
         )
         serializer = PersonFullSerializer(obj)
-        return Response(serializer.data)
+        return serializer.data
 
 
-class TopGenresAnalyticsView(APIView):
-    def get(self, request):
+class TopGenresAnalyticsView(CacheResponseMixin, APIView):
+    cache_prefix = 'analytics:top-genres'
+    cache_ttl = 900
+
+    def build_cache_key(self) -> str:
+        return f'{self.cache_prefix}:{self._query_params_key()}'
+
+    def get_cached_data(self):
         queryset = (
             Genre.objects
             .annotate(
@@ -311,4 +379,4 @@ class TopGenresAnalyticsView(APIView):
                 'average_rating': avg_rating,
             })
 
-        return Response(data)
+        return data

@@ -65,8 +65,8 @@
 
         <div class="status">
             <div><strong>Текущий режим:</strong> {{ cache_status.mode }}</div>
-            <div><strong>Глобальный кеш:</strong> {{ cache_status.cache_enabled|yesno:"включен,выключен" }}</div>
-            <div><strong>L1 кеш:</strong> {{ cache_status.local_cache_enabled|yesno:"включен,выключен" }}</div>
+            <div><strong>Кеш:</strong> {{ cache_status.cache_enabled|yesno:"включен,выключен" }}</div>
+                <div><strong>Local кеш:</strong> {{ cache_status.local_cache_enabled|yesno:"включен,выключен" }}</div>
             <div><strong>Redis кеш:</strong> {{ cache_status.redis_cache_enabled|yesno:"включен,выключен" }}</div>
         </div>
 
