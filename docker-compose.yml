@@ -1,14 +1,42 @@
 services:
-  app:
+  app1:
     build: .
-    container_name: app
-    command: sh -c "python manage.py runserver 0.0.0.0:8000"
+    container_name: app1
+    command: sh -c "gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 1"
     volumes:
       - .:/app
     env_file:
       - .env
-    ports:
-      - '8000:8000'
+    expose:
+      - '8000'
+    depends_on:
+      - db
+      - redis
+
+  app2:
+    build: .
+    container_name: app2
+    command: sh -c "gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 1"
+    volumes:
+      - .:/app
+    env_file:
+      - .env
+    expose:
+      - '8000'
+    depends_on:
+      - db
+      - redis
+
+  app3:
+    build: .
+    container_name: app3
+    command: sh -c "gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 1"
+    volumes:
+      - .:/app
+    env_file:
+      - .env
+    expose:
+      - '8000'
     depends_on:
       - db
       - redis
@@ -33,7 +61,20 @@ services:
     volumes:
       - redis_data:/data
     ports:
-      - '6379:6379'
+      - "6379:6379"
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: nginx
+    restart: unless-stopped
+    depends_on:
+      - app1
+      - app2
+      - app3
+    ports:
+      - '8000:80'
+    volumes:
+      - ./deploy/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
 
 volumes:
   postgres_data:
