@@ -80,9 +80,9 @@ class MultiLevelCache(CacheInterface):
         if not self.enabled:
             mode = 'Без кеша'
         elif self.local_cache.enabled and self.redis_cache.enabled:
-            mode = 'L1 + Redis'
+            mode = 'Local + Redis'
         elif self.local_cache.enabled and not self.redis_cache.enabled:
-            mode = 'Только L1'
+            mode = 'Только Local'
         elif not self.local_cache.enabled and self.redis_cache.enabled:
             mode = 'Только Redis'
         else:
