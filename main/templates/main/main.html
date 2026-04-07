@@ -1,10 +1,108 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ru">
 <head>
-    <meta charset="UTF-8">
-    <title>Main</title>
+    <meta charset="utf-8">
+    <title>IMDb API</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 32px;
+            line-height: 1.5;
+        }
+
+        .panel {
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 24px;
+            max-width: 720px;
+        }
+
+        .status {
+            margin: 12px 0;
+            padding: 10px 12px;
+            background: #f5f5f5;
+            border-radius: 6px;
+        }
+
+        .actions {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+            margin-top: 12px;
+        }
+
+        button {
+            padding: 10px 14px;
+            border: 1px solid #999;
+            border-radius: 6px;
+            background: white;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background: #f3f3f3;
+        }
+
+        .danger {
+            border-color: #c55;
+        }
+
+        code {
+            background: #f6f6f6;
+            padding: 2px 5px;
+            border-radius: 4px;
+        }
+    </style>
 </head>
 <body>
-<a href="http://localhost:8000/admin/">Admin Panel</a>
+    <h1>IMDb API</h1>
+
+    <p><a href="/admin/">Админка</a></p>
+
+    <div class="panel">
+        <h2>Управление кешем</h2>
+
+        <div class="status">
+            <div><strong>Текущий режим:</strong> {{ cache_status.mode }}</div>
+            <div><strong>Глобальный кеш:</strong> {{ cache_status.cache_enabled|yesno:"включен,выключен" }}</div>
+            <div><strong>L1 кеш:</strong> {{ cache_status.local_cache_enabled|yesno:"включен,выключен" }}</div>
+            <div><strong>Redis кеш:</strong> {{ cache_status.redis_cache_enabled|yesno:"включен,выключен" }}</div>
+        </div>
+
+        <form method="post">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="set_cache_mode">
+
+            <div class="actions">
+                <button type="submit" name="cache_mode" value="off">Без кеша</button>
+                <button type="submit" name="cache_mode" value="local">Только L1</button>
+                <button type="submit" name="cache_mode" value="redis">Только Redis</button>
+                <button type="submit" name="cache_mode" value="multi">L1 + Redis</button>
+            </div>
+        </form>
+
+        <form method="post" style="margin-top: 16px;">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="clear_cache">
+            <button type="submit" class="danger">Сбросить весь кеш</button>
+        </form>
+    </div>
+
+    <h2>Простые эндпоинты</h2>
+    <ul>
+        <li><a href="/api/titles/">/api/titles/</a></li>
+        <li><a href="/api/titles/top/">/api/titles/top/</a></li>
+        <li><a href="/api/titles/search/?q=batman">/api/titles/search/?q=batman</a></li>
+        <li><a href="/api/titles/tt0111161/">/api/titles/tt0111161/</a></li>
+    </ul>
+
+    <h2>Более сложные эндпоинты</h2>
+    <ul>
+        <li><a href="/api/titles/tt0111161/full/">/api/titles/&lt;tconst&gt;/full/</a></li>
+        <li><a href="/api/titles/discover/?title_type=1&genre=Drama&min_votes=10000&ordering=-rating">/api/titles/discover/</a></li>
+        <li><a href="/api/persons/nm0000151/full/">/api/persons/&lt;nconst&gt;/full/</a></li>
+        <li><a href="/api/analytics/top-genres/">/api/analytics/top-genres/</a></li>
+    </ul>
 </body>
 </html>

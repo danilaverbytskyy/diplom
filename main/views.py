@@ -1,10 +1,11 @@
 from django.db.models import Avg, Count, Q
-from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
 from rest_framework import generics
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from django.shortcuts import redirect, render
+from django.views.decorators.http import require_http_methods
 
 from main.models import Crew, Genre, Person, Principal, Title
 from main.serializers import (
@@ -12,6 +13,7 @@ from main.serializers import (
     TitleFullSerializer,
     TitleListSerializer,
 )
+from cache.instance import cache
 
 
 class TitlePagination(PageNumberPagination):
@@ -20,37 +22,49 @@ class TitlePagination(PageNumberPagination):
     max_page_size = 100
 
 
+@require_http_methods(['GET', 'POST'])
 def home_page(request):
-    html = '''
-    <html>
-        <head>
-            <meta charset="utf-8">
-            <title>IMDb API</title>
-        </head>
-        <body>
-            <h1>IMDb API</h1>
+    if request.method == 'POST':
+        action = request.POST.get('action')
 
-            <p><a href="/admin/">Админка</a></p>
+        if action == 'set_cache_mode':
+            mode = request.POST.get('cache_mode')
 
-            <h2>Простые эндпоинты</h2>
-            <ul>
-                <li><a href="/api/titles/">/api/titles/</a></li>
-                <li><a href="/api/titles/top/">/api/titles/top/</a></li>
-                <li><a href="/api/titles/search/?q=batman">/api/titles/search/?q=batman</a></li>
-                <li><a href="/api/titles/tt0111161/">/api/titles/tt0111161/</a></li>
-            </ul>
+            if mode == 'off':
+                cache.configure(
+                    enabled=False,
+                    local_enabled=False,
+                    redis_enabled=False,
+                )
+            elif mode == 'local':
+                cache.configure(
+                    enabled=True,
+                    local_enabled=True,
+                    redis_enabled=False,
+                )
+            elif mode == 'redis':
+                cache.configure(
+                    enabled=True,
+                    local_enabled=False,
+                    redis_enabled=True,
+                )
+            elif mode == 'multi':
+                cache.configure(
+                    enabled=True,
+                    local_enabled=True,
+                    redis_enabled=True,
+                )
 
-            <h2>Более сложные эндпоинты</h2>
-            <ul>
-                <li><a href="/api/titles/tt0111161/full/">/api/titles/&lt;tconst&gt;/full/</a></li>
-                <li><a href="/api/titles/discover/?title_type=1&genre=Drama&min_votes=10000&ordering=-rating">/api/titles/discover/</a></li>
-                <li><a href="/api/persons/nm0000151/full/">/api/persons/&lt;nconst&gt;/full/</a></li>
-                <li><a href="/api/analytics/top-genres/">/api/analytics/top-genres/</a></li>
-            </ul>
-        </body>
-    </html>
-    '''
-    return HttpResponse(html)
+            return redirect('home')
+
+        if action == 'clear_cache':
+            cache.clear()
+            return redirect('home')
+
+    context = {
+        'cache_status': cache.get_status(),
+    }
+    return render(request, 'main/main.html', context)
 
 
 class TitleListView(generics.ListAPIView):
@@ -89,6 +103,45 @@ class TitleListView(generics.ListAPIView):
             queryset = queryset.order_by('-start_year', 'title', 'id')
 
         return queryset
+
+    def build_cache_key(self) -> str:
+        params = self.request.query_params
+        parts = []
+
+        for key in sorted(params.keys()):
+            parts.append(f'{key}={params.get(key)}')
+
+        if not parts:
+            return 'titles:list'
+
+        return f'titles:list:{"|".join(parts)}'
+
+    def list(self, request, *args, **kwargs):
+        cache_key = self.build_cache_key()
+
+        def factory():
+            queryset = self.get_queryset()
+            page = self.paginate_queryset(queryset)
+
+            if page is not None:
+                serializer = self.get_serializer(page, many=True)
+                return {
+                    'count': self.paginator.page.paginator.count,
+                    'next': self.paginator.get_next_link(),
+                    'previous': self.paginator.get_previous_link(),
+                    'results': serializer.data,
+                }
+
+            serializer = self.get_serializer(queryset, many=True)
+            return serializer.data
+
+        data = cache.get_or_set(
+            key=cache_key,
+            factory=factory,
+            ttl=300,
+        )
+
+        return Response(data)
 
 
 class TopTitlesView(generics.ListAPIView):

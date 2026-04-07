@@ -100,6 +100,15 @@ AUTH_PASSWORD_VALIDATORS = [
     },
 ]
 
+REDIS_URL = 'redis://redis:6379/1'
+
+CACHE_ENABLED = False
+LOCAL_CACHE_ENABLED = False
+REDIS_CACHE_ENABLED = False
+
+CACHE_PREFIX = 'imdb'
+CACHE_DEFAULT_TTL = 300
+
 CACHES = {
     'default': {
         'BACKEND': 'django_redis.cache.RedisCache',
