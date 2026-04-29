@@ -1,5 +1,4 @@
 import csv
-import datetime
 import io
 import json
 from pathlib import Path
@@ -30,18 +29,6 @@ TITLE_TYPE_MAP = {
     'tvSeries': 3,
     'tvMiniSeries': 4,
     'tvMovie': 5,
-    'tvEpisode': 6,
-    'tvShort': 7,
-    'tvSpecial': 8,
-    'tvPilot': 9,
-    'video': 10,
-    'videoGame': 11,
-    'podcastSeries': 12,
-    'podcastEpisode': 13,
-    'radioSeries': 14,
-    'radioEpisode': 15,
-    'musicVideo': 16,
-    'audiobook': 17,
     'other': 99,
 }
 
@@ -66,16 +53,6 @@ PRINCIPAL_CATEGORY_MAP = {
     'assistant_director': 13,
     'casting_director': 14,
     'production_designer': 15,
-    'art_director': 16,
-    'costume_designer': 17,
-    'make_up_department': 18,
-    'camera_department': 19,
-    'music_department': 20,
-    'sound_department': 21,
-    'visual_effects': 22,
-    'animation_department': 23,
-    'executive_producer': 24,
-    'archive_material': 25,
     'other': 99,
 }
 
@@ -198,20 +175,20 @@ class Command(BaseCommand):
             self.stderr.write(self.style.ERROR(f'Directory does not exist: {base_path}'))
             return
 
-        # if options['truncate']:
-        #     self.truncate_tables()
-        #
-        # if not options['skip_titles']:
-        #     self.import_titles(base_path / 'title.basics.tsv')
-        #
-        # if not options['skip_ratings']:
-        #     self.import_ratings(base_path / 'title.ratings.tsv')
-        #
-        # if not options['skip_persons']:
-        #     self.import_persons(base_path / 'name.basics.tsv')
-        #
-        # if not options['skip_crew']:
-        #     self.import_crew(base_path / 'title.crew.tsv')
+        if options['truncate']:
+            self.truncate_tables()
+
+        if not options['skip_titles']:
+            self.import_titles(base_path / 'title.basics.tsv')
+
+        if not options['skip_ratings']:
+            self.import_ratings(base_path / 'title.ratings.tsv')
+
+        if not options['skip_persons']:
+            self.import_persons(base_path / 'name.basics.tsv')
+
+        if not options['skip_crew']:
+            self.import_crew(base_path / 'title.crew.tsv')
 
         if not options['skip_principals']:
             self.import_principals(base_path / 'title.principals.tsv')

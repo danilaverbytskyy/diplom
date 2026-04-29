@@ -18,24 +18,13 @@ class TitleType(models.IntegerChoices):
     TV_SERIES = 3, 'Сериал'
     TV_MINI_SERIES = 4, 'Мини-сериал'
     TV_MOVIE = 5, 'ТВ-фильм'
-    TV_EPISODE = 6, 'Эпизод'
-    TV_SHORT = 7, 'ТВ-короткометражка'
-    TV_SPECIAL = 8, 'ТВ-спецвыпуск'
-    TV_PILOT = 9, 'ТВ-пилот'
-    VIDEO = 10, 'Видео'
-    VIDEO_GAME = 11, 'Видеоигра'
-    PODCAST_SERIES = 12, 'Подкаст-сериал'
-    PODCAST_EPISODE = 13, 'Эпизод подкаста'
-    RADIO_SERIES = 14, 'Радиосериал'
-    RADIO_EPISODE = 15, 'Радиоэпизод'
-    MUSIC_VIDEO = 16, 'Музыкальное видео'
-    AUDIOBOOK = 17, 'Аудиокнига'
     OTHER = 99, 'Другое'
 
 
 class CrewRole(models.IntegerChoices):
     DIRECTOR = 1, 'Режиссер'
     WRITER = 2, 'Сценарист'
+    OTHER = 99, 'Другое'
 
 
 class PrincipalCategory(models.IntegerChoices):
@@ -54,16 +43,6 @@ class PrincipalCategory(models.IntegerChoices):
     ASSISTANT_DIRECTOR = 13, 'Помощник режиссера'
     CASTING_DIRECTOR = 14, 'Кастинг-директор'
     PRODUCTION_DESIGNER = 15, 'Художник-постановщик'
-    ART_DIRECTOR = 16, 'Арт-директор'
-    COSTUME_DESIGNER = 17, 'Художник по костюмам'
-    MAKE_UP_DEPARTMENT = 18, 'Грим'
-    CAMERA_DEPARTMENT = 19, 'Камерный отдел'
-    MUSIC_DEPARTMENT = 20, 'Музыкальный отдел'
-    SOUND_DEPARTMENT = 21, 'Звуковой отдел'
-    VISUAL_EFFECTS = 22, 'Визуальные эффекты'
-    ANIMATION_DEPARTMENT = 23, 'Анимационный отдел'
-    EXECUTIVE_PRODUCER = 24, 'Исполнительный продюсер'
-    ARCHIVE_MATERIAL = 25, 'Архивный материал'
     OTHER = 99, 'Другое'
 
 
