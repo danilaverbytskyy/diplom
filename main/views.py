@@ -1,7 +1,14 @@
 from django.db.models import Avg, Count, Q
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_http_methods
-from rest_framework import generics
+from drf_spectacular.utils import (
+    OpenApiParameter,
+    OpenApiTypes,
+    extend_schema,
+    extend_schema_view,
+    inline_serializer,
+)
+from rest_framework import generics, serializers
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.views import APIView
 
@@ -13,6 +20,73 @@ from main.serializers import (
 )
 from cache.instance import cache
 from cache.mixins import CacheResponseMixin
+
+
+PaginatedTitleListResponseSerializer = inline_serializer(
+    name='PaginatedTitleListResponse',
+    fields={
+        'count': serializers.IntegerField(),
+        'next': serializers.CharField(allow_null=True),
+        'previous': serializers.CharField(allow_null=True),
+        'results': TitleListSerializer(many=True),
+    },
+)
+
+TopGenreAnalyticsResponseSerializer = inline_serializer(
+    name='TopGenreAnalyticsResponse',
+    fields={
+        'genre': serializers.CharField(),
+        'titles_count': serializers.IntegerField(),
+        'average_rating': serializers.FloatField(allow_null=True),
+    },
+    many=True,
+)
+
+
+PAGE_PARAMETER = OpenApiParameter(
+    name='page',
+    description='Номер страницы результата',
+    required=False,
+    type=OpenApiTypes.INT,
+)
+
+PAGE_SIZE_PARAMETER = OpenApiParameter(
+    name='page_size',
+    description='Количество записей на странице, не более 100',
+    required=False,
+    type=OpenApiTypes.INT,
+)
+
+TITLE_TYPE_PARAMETER = OpenApiParameter(
+    name='title_type',
+    description='Тип произведения',
+    required=False,
+    type=OpenApiTypes.STR,
+)
+
+ORDERING_PARAMETER = OpenApiParameter(
+    name='ordering',
+    description='Поле сортировки результата',
+    required=False,
+    type=OpenApiTypes.STR,
+)
+
+
+TITLE_ID_PARAMETER = OpenApiParameter(
+    name='id',
+    description='Внутренний идентификатор произведения',
+    required=True,
+    type=OpenApiTypes.INT,
+    location=OpenApiParameter.PATH,
+)
+
+PERSON_ID_PARAMETER = OpenApiParameter(
+    name='id',
+    description='Внутренний идентификатор персоны',
+    required=True,
+    type=OpenApiTypes.INT,
+    location=OpenApiParameter.PATH,
+)
 
 
 class TitlePagination(PageNumberPagination):
@@ -66,6 +140,36 @@ def home_page(request):
     return render(request, 'main/main.html', context)
 
 
+@extend_schema_view(
+    get=extend_schema(
+        tags=['Titles'],
+        summary='Получение списка произведений',
+        description=(
+            'Возвращает список фильмов и других произведений с поддержкой '
+            'фильтрации, сортировки и пагинации. Ответ кешируется.'
+        ),
+        parameters=[
+            TITLE_TYPE_PARAMETER,
+            OpenApiParameter(
+                name='year',
+                description='Год выпуска произведения',
+                required=False,
+                type=OpenApiTypes.INT,
+            ),
+            OpenApiParameter(
+                name='is_adult',
+                description='Признак взрослого контента: 0 или 1',
+                required=False,
+                type=OpenApiTypes.STR,
+                enum=['0', '1'],
+            ),
+            ORDERING_PARAMETER,
+            PAGE_PARAMETER,
+            PAGE_SIZE_PARAMETER,
+        ],
+        responses=PaginatedTitleListResponseSerializer,
+    ),
+)
 class TitleListView(CacheResponseMixin, generics.ListAPIView):
     serializer_class = TitleListSerializer
     pagination_class = TitlePagination
@@ -125,6 +229,28 @@ class TitleListView(CacheResponseMixin, generics.ListAPIView):
         return serializer.data
 
 
+@extend_schema_view(
+    get=extend_schema(
+        tags=['Titles'],
+        summary='Получение топа произведений',
+        description=(
+            'Возвращает список произведений, отсортированных по рейтингу '
+            'и количеству голосов. Ответ кешируется.'
+        ),
+        parameters=[
+            OpenApiParameter(
+                name='min_votes',
+                description='Минимальное количество голосов',
+                required=False,
+                type=OpenApiTypes.INT,
+            ),
+            TITLE_TYPE_PARAMETER,
+            PAGE_PARAMETER,
+            PAGE_SIZE_PARAMETER,
+        ],
+        responses=PaginatedTitleListResponseSerializer,
+    ),
+)
 class TopTitlesView(CacheResponseMixin, generics.ListAPIView):
     serializer_class = TitleListSerializer
     pagination_class = TitlePagination
@@ -167,6 +293,28 @@ class TopTitlesView(CacheResponseMixin, generics.ListAPIView):
         return serializer.data
 
 
+@extend_schema_view(
+    get=extend_schema(
+        tags=['Titles'],
+        summary='Поиск произведений по названию',
+        description=(
+            'Выполняет поиск произведений по части названия. Поддерживает '
+            'сортировку и пагинацию. Ответ кешируется с учётом параметров запроса.'
+        ),
+        parameters=[
+            OpenApiParameter(
+                name='q',
+                description='Поисковая строка',
+                required=True,
+                type=OpenApiTypes.STR,
+            ),
+            ORDERING_PARAMETER,
+            PAGE_PARAMETER,
+            PAGE_SIZE_PARAMETER,
+        ],
+        responses=PaginatedTitleListResponseSerializer,
+    ),
+)
 class TitleSearchView(CacheResponseMixin, generics.ListAPIView):
     serializer_class = TitleListSerializer
     pagination_class = TitlePagination
@@ -222,25 +370,46 @@ class TitleSearchView(CacheResponseMixin, generics.ListAPIView):
         return serializer.data
 
 
+@extend_schema_view(
+    get=extend_schema(
+        tags=['Titles'],
+        summary='Получение краткой информации о произведении',
+        description='Возвращает краткую информацию о произведении по внутреннему идентификатору.',
+        parameters=[TITLE_ID_PARAMETER],
+        responses=TitleListSerializer,
+    ),
+)
 class TitleDetailView(CacheResponseMixin, APIView):
     cache_prefix = 'title:detail'
     cache_ttl = 600
 
     def build_cache_key(self) -> str:
-        return f'{self.cache_prefix}:{self.kwargs["tconst"]}'
+        return f'{self.cache_prefix}:{self.kwargs["id"]}'
 
     def get_cached_data(self):
-        obj = get_object_or_404(Title, tconst=self.kwargs['tconst'])
+        obj = get_object_or_404(Title, id=self.kwargs['id'])
         serializer = TitleListSerializer(obj)
         return serializer.data
 
 
+@extend_schema_view(
+    get=extend_schema(
+        tags=['Titles'],
+        summary='Получение полной информации о произведении',
+        description=(
+            'Возвращает подробную информацию о произведении, включая рейтинг, '
+            'жанры, съёмочную группу и основных участников.'
+        ),
+        parameters=[TITLE_ID_PARAMETER],
+        responses=TitleFullSerializer,
+    ),
+)
 class TitleFullDetailView(CacheResponseMixin, APIView):
     cache_prefix = 'title:full'
     cache_ttl = 600
 
     def build_cache_key(self) -> str:
-        return f'{self.cache_prefix}:{self.kwargs["tconst"]}'
+        return f'{self.cache_prefix}:{self.kwargs["id"]}'
 
     def get_cached_data(self):
         obj = get_object_or_404(
@@ -251,12 +420,53 @@ class TitleFullDetailView(CacheResponseMixin, APIView):
                 'crew_members__person',
                 'principals__person',
             ),
-            tconst=self.kwargs['tconst'],
+            id=self.kwargs['id'],
         )
         serializer = TitleFullSerializer(obj)
         return serializer.data
 
 
+@extend_schema_view(
+    get=extend_schema(
+        tags=['Titles'],
+        summary='Подборка произведений с расширенной фильтрацией',
+        description=(
+            'Возвращает список произведений с фильтрацией по типу, жанру, '
+            'диапазону лет, количеству голосов и сортировке.'
+        ),
+        parameters=[
+            TITLE_TYPE_PARAMETER,
+            OpenApiParameter(
+                name='genre',
+                description='Название жанра',
+                required=False,
+                type=OpenApiTypes.STR,
+            ),
+            OpenApiParameter(
+                name='year_from',
+                description='Начальный год выпуска',
+                required=False,
+                type=OpenApiTypes.INT,
+            ),
+            OpenApiParameter(
+                name='year_to',
+                description='Конечный год выпуска',
+                required=False,
+                type=OpenApiTypes.INT,
+            ),
+            OpenApiParameter(
+                name='min_votes',
+                description='Минимальное количество голосов',
+                required=False,
+                type=OpenApiTypes.INT,
+            ),
+            ORDERING_PARAMETER,
+            PAGE_PARAMETER,
+            PAGE_SIZE_PARAMETER,
+        ],
+        responses=PaginatedTitleListResponseSerializer,
+    ),
+)
 class TitleDiscoverView(CacheResponseMixin, generics.ListAPIView):
     serializer_class = TitleListSerializer
     pagination_class = TitlePagination
@@ -331,12 +541,24 @@ class TitleDiscoverView(CacheResponseMixin, generics.ListAPIView):
         return serializer.data
 
 
+@extend_schema_view(
+    get=extend_schema(
+        tags=['Persons'],
+        summary='Получение полной информации о персоне',
+        description=(
+            'Возвращает сведения о персоне и связанных с ней произведениях, '
+            'в которых она участвовала как основной участник или член съёмочной группы.'
+        ),
+        parameters=[PERSON_ID_PARAMETER],
+        responses=PersonFullSerializer,
+    ),
+)
 class PersonFullDetailView(CacheResponseMixin, APIView):
     cache_prefix = 'person:full'
     cache_ttl = 600
 
     def build_cache_key(self) -> str:
-        return f'{self.cache_prefix}:{self.kwargs["nconst"]}'
+        return f'{self.cache_prefix}:{self.kwargs["id"]}'
 
     def get_cached_data(self):
         obj = get_object_or_404(
@@ -344,12 +566,24 @@ class PersonFullDetailView(CacheResponseMixin, APIView):
                 'principal_titles__title__rating',
                 'crew_titles__title__rating',
             ),
-            nconst=self.kwargs['nconst'],
+            id=self.kwargs['id'],
         )
         serializer = PersonFullSerializer(obj)
         return serializer.data
 
 
+@extend_schema_view(
+    get=extend_schema(
+        tags=['Analytics'],
+        summary='Получение аналитики по жанрам',
+        description=(
+            'Возвращает список жанров с количеством связанных произведений '
+            'и средним рейтингом. Endpoint используется для демонстрации '
+            'кеширования более затратных аналитических запросов.'
+        ),
+        responses=TopGenreAnalyticsResponseSerializer,
+    ),
+)
 class TopGenresAnalyticsView(CacheResponseMixin, APIView):
     cache_prefix = 'analytics:top-genres'
     cache_ttl = 900
