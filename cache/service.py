@@ -1,3 +1,4 @@
+from threading import Lock, RLock
 from typing import Any, Callable
 
 from .interfaces import CacheInterface
@@ -11,12 +12,16 @@ class MultiLevelCache(CacheInterface):
         redis_cache,
         mode_storage: RedisCacheModeStorage | None = None,
         default_mode: str = 'off',
+        use_locks: bool = True,
     ) -> None:
         self.local_cache = local_cache
         self.redis_cache = redis_cache
         self.mode_storage = mode_storage
         self.current_mode = self._normalize_mode(default_mode)
+        self.use_locks = use_locks
         self._last_seen_version: int | None = None
+        self._locks: dict[str, Lock] = {}
+        self._locks_guard = RLock()
         self._apply_mode(self.current_mode)
 
     @property
@@ -109,11 +114,17 @@ class MultiLevelCache(CacheInterface):
         if value is not None:
             return value
 
-        value = factory()
-        if value is not None:
-            self.set(key, value, ttl)
+        if not self.use_locks:
+            return self._calculate_and_store(key, factory, ttl)
 
-        return value
+        lock = self._get_lock(key)
+
+        with lock:
+            value = self.get(key, ttl)
+            if value is not None:
+                return value
+
+            return self._calculate_and_store(key, factory, ttl)
 
     def set_mode(self, mode: str) -> str:
         mode = self._normalize_mode(mode)
@@ -159,3 +170,24 @@ class MultiLevelCache(CacheInterface):
             'local_cache_size': self.local_cache.size(),
             'version': self._last_seen_version or 0,
         }
+
+    def _calculate_and_store(
+        self,
+        key: str,
+        factory: Callable[[], Any],
+        ttl: int | None,
+    ) -> Any:
+        value = factory()
+        if value is not None:
+            self.set(key, value, ttl)
+
+        return value
+
+    def _get_lock(self, key: str) -> Lock:
+        with self._locks_guard:
+            lock = self._locks.get(key)
+            if lock is None:
+                lock = Lock()
+                self._locks[key] = lock
+
+            return lock
