@@ -1,3 +1,5 @@
+import socket
+
 from django.db.models import Avg, Count, Q
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_http_methods
@@ -20,6 +22,7 @@ from main.serializers import (
 )
 from cache.instance import cache
 from cache.mixins import CacheResponseMixin
+from cache.modes import CACHE_MODE_CONFIGS
 
 
 PaginatedTitleListResponseSerializer = inline_serializer(
@@ -101,33 +104,7 @@ def home_page(request):
         action = request.POST.get('action')
 
         if action == 'set_cache_mode':
-            mode = request.POST.get('cache_mode')
-
-            if mode == 'off':
-                cache.configure(
-                    enabled=False,
-                    local_enabled=False,
-                    redis_enabled=False,
-                )
-            elif mode == 'local':
-                cache.configure(
-                    enabled=True,
-                    local_enabled=True,
-                    redis_enabled=False,
-                )
-            elif mode == 'redis':
-                cache.configure(
-                    enabled=True,
-                    local_enabled=False,
-                    redis_enabled=True,
-                )
-            elif mode == 'multi':
-                cache.configure(
-                    enabled=True,
-                    local_enabled=True,
-                    redis_enabled=True,
-                )
-
+            cache.set_mode(request.POST.get('cache_mode', 'off'))
             return redirect('home')
 
         if action == 'clear_cache':
@@ -136,6 +113,11 @@ def home_page(request):
 
     context = {
         'cache_status': cache.get_status(),
+        'cache_modes': [
+            {'code': code, 'title': config.title}
+            for code, config in CACHE_MODE_CONFIGS.items()
+        ],
+        'container_name': socket.gethostname(),
     }
     return render(request, 'main/main.html', context)
 

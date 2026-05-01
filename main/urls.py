@@ -32,7 +32,7 @@ urlpatterns = [
     path('api/titles/search/', TitleSearchView.as_view(), name='title-search'),
     path('api/titles/discover/', TitleDiscoverView.as_view(), name='title-discover'),
     path('api/titles/<int:id>/', TitleDetailView.as_view(), name='title-detail'),
-    path('api/titles/<int:id>/', TitleFullDetailView.as_view(), name='title-full-detail'),
+    path('api/titles/<int:id>/full/', TitleFullDetailView.as_view(), name='title-full-detail'),
 
     path('api/persons/<int:id>/', PersonFullDetailView.as_view(), name='person-full-detail'),
 

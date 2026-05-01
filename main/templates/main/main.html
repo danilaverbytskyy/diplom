@@ -44,6 +44,12 @@
             background: #f3f3f3;
         }
 
+        button.active {
+            border-color: #2b6cb0;
+            background: #ebf4ff;
+            font-weight: 700;
+        }
+
         .danger {
             border-color: #c55;
         }
@@ -66,8 +72,11 @@
         <div class="status">
             <div><strong>Текущий режим:</strong> {{ cache_status.mode }}</div>
             <div><strong>Кеш:</strong> {{ cache_status.cache_enabled|yesno:"включен,выключен" }}</div>
-                <div><strong>Local кеш:</strong> {{ cache_status.local_cache_enabled|yesno:"включен,выключен" }}</div>
+            <div><strong>Local кеш:</strong> {{ cache_status.local_cache_enabled|yesno:"включен,выключен" }}</div>
             <div><strong>Redis кеш:</strong> {{ cache_status.redis_cache_enabled|yesno:"включен,выключен" }}</div>
+            <div><strong>Локальных записей в этом контейнере:</strong> {{ cache_status.local_cache_size }}</div>
+            <div><strong>Общая версия кеша:</strong> {{ cache_status.version }}</div>
+            <div><strong>Ответил контейнер:</strong> {{ container_name }}</div>
         </div>
 
         <form method="post">
@@ -75,10 +84,16 @@
             <input type="hidden" name="action" value="set_cache_mode">
 
             <div class="actions">
-                <button type="submit" name="cache_mode" value="off">Без кеша</button>
-                <button type="submit" name="cache_mode" value="local">Только Local</button>
-                <button type="submit" name="cache_mode" value="redis">Только Redis</button>
-                <button type="submit" name="cache_mode" value="multi">Local + Redis</button>
+                {% for mode in cache_modes %}
+                    <button
+                        type="submit"
+                        name="cache_mode"
+                        value="{{ mode.code }}"
+                        class="{% if cache_status.mode_code == mode.code %}active{% endif %}"
+                    >
+                        {{ mode.title }}
+                    </button>
+                {% endfor %}
             </div>
         </form>
 
@@ -94,14 +109,14 @@
         <li><a href="/api/titles/">/api/titles/</a></li>
         <li><a href="/api/titles/top/">/api/titles/top/</a></li>
         <li><a href="/api/titles/search/?q=batman">/api/titles/search/?q=batman</a></li>
-        <li><a href="/api/titles/tt0111161/">/api/titles/tt0111161/</a></li>
+        <li><a href="/api/titles/1/">/api/titles/1/</a></li>
     </ul>
 
     <h2>Более сложные эндпоинты</h2>
     <ul>
-        <li><a href="/api/titles/tt0111161/full/">/api/titles/&lt;tconst&gt;/full/</a></li>
+        <li><a href="/api/titles/1/full/">/api/titles/&lt;id&gt;/full/</a></li>
         <li><a href="/api/titles/discover/?title_type=1&genre=Drama&min_votes=10000&ordering=-rating">/api/titles/discover/</a></li>
-        <li><a href="/api/persons/nm0000151/full/">/api/persons/&lt;nconst&gt;/full/</a></li>
+        <li><a href="/api/persons/1/">/api/persons/&lt;id&gt;/</a></li>
         <li><a href="/api/analytics/top-genres/">/api/analytics/top-genres/</a></li>
     </ul>
 </body>

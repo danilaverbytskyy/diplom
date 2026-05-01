@@ -101,13 +101,15 @@ AUTH_PASSWORD_VALIDATORS = [
     },
 ]
 
-REDIS_URL = 'redis://redis:6379/1'
+REDIS_URL = os.getenv('REDIS_URL', 'redis://redis:6379/1')
 
-CACHE_ENABLED = False
-LOCAL_CACHE_ENABLED = False
-REDIS_CACHE_ENABLED = False
+# Начальный режим используется, пока в Redis ещё нет выбранного режима.
+# Допустимые значения: off, local, redis, multi.
+CACHE_MODE = os.getenv('CACHE_MODE', 'off')
 
-CACHE_PREFIX = 'imdb'
+CACHE_PREFIX = os.getenv('CACHE_PREFIX', 'imdb')
+CACHE_MODE_KEY = f'{CACHE_PREFIX}:control:mode'
+CACHE_VERSION_KEY = f'{CACHE_PREFIX}:control:version'
 CACHE_DEFAULT_TTL = 300
 
 CACHES = {
