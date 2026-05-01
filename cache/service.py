@@ -14,7 +14,7 @@ class MultiLevelCache(CacheInterface):
         self.redis_cache = redis_cache
         self.enabled = enabled
 
-    def get(self, key: str) -> Any | None:
+    def get(self, key: str, ttl: int | None = None) -> Any | None:
         if not self.enabled:
             return None
 
@@ -24,7 +24,7 @@ class MultiLevelCache(CacheInterface):
 
         value = self.redis_cache.get(key)
         if value is not None:
-            self.local_cache.set(key, value)
+            self.local_cache.set(key, value, ttl)
             return value
 
         return None
@@ -56,7 +56,7 @@ class MultiLevelCache(CacheInterface):
         if not self.enabled:
             return factory()
 
-        value = self.get(key)
+        value = self.get(key, ttl)
         if value is not None:
             return value
 
