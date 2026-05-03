@@ -76,6 +76,18 @@ services:
     ports:
       - '6379:6379'
 
+  k6:
+    image: grafana/k6:latest
+    container_name: k6
+    volumes:
+      - ./load_tests:/scripts
+    environment:
+      BASE_URL: http://nginx
+      TITLE_ID: 1
+    depends_on:
+      - nginx
+    entrypoint: [ 'k6' ]
+
 volumes:
   postgres_data:
   redis_data:

@@ -1,6 +1,7 @@
 from django.urls import path
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView, SpectacularRedocView
 
+from main.cache_views import cache_status, cache_clear, cache_mode
 from main.views import (
     home_page,
     PersonFullDetailView,
@@ -37,4 +38,7 @@ urlpatterns = [
     path('api/persons/<int:id>/', PersonFullDetailView.as_view(), name='person-full-detail'),
 
     path('api/analytics/top-genres/', TopGenresAnalyticsView.as_view(), name='top-genres-analytics'),
+    path('api/cache/status/', cache_status, name='cache-status'),
+    path('api/cache/mode/', cache_mode, name='cache-mode'),
+    path('api/cache/clear/', cache_clear, name='cache-clear'),
 ]

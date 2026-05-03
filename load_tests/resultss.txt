@@ -1,0 +1,50 @@
+| Сценарий | Режим кеша | Avg, мс | p90, мс | p95, мс | p99, мс | RPS | Ошибки |
+|---|---|---:|---:|---:|---:|---:|---:|
+| light | off | 1237.99 | 2885.22 | 3298.62 | - | 1.07 | - |
+| light | local | 18.34 | 20.29 | 23.4 | - | 2.21 | - |
+| light | redis | 19.16 | 23.77 | 24.97 | - | 2.2 | - |
+| light | multi | 19.01 | 22.05 | 24.45 | - | 2.2 | - |
+| heavy | off | 8398.35 | 11833.09 | 13792.83 | - | 0.17 | - |
+| heavy | local | 167.16 | 19.14 | 22.46 | - | 0.71 | - |
+| heavy | redis | 18.17 | 21.22 | 22.14 | - | 0.77 | - |
+| heavy | multi | 17.53 | 18.73 | 19.58 | - | 0.77 | - |
+
+## Метрики по endpoint
+
+| Сценарий | Режим | Endpoint metric | Avg, мс | p90, мс | p95, мс | p99, мс |
+|---|---|---|---:|---:|---:|---:|
+| light | off | endpoint_titles_list_duration | 1094.66 | 2649.21 | 2898.2 | - |
+| light | off | endpoint_top_titles_duration | 256.71 | 300.15 | 303.76 | - |
+| light | off | endpoint_search_duration | 2550.68 | 3402.97 | 3579.16 | - |
+| light | off | endpoint_full_title_duration | 328.14 | 1427.97 | 1510.45 | - |
+| light | local | endpoint_titles_list_duration | 18.86 | 23.92 | 26.58 | - |
+| light | local | endpoint_top_titles_duration | 18.45 | 21.24 | 22.07 | - |
+| light | local | endpoint_search_duration | 18.57 | 20.2 | 23.63 | - |
+| light | local | endpoint_full_title_duration | 17.62 | 18.51 | 19.12 | - |
+| light | redis | endpoint_titles_list_duration | 18.92 | 22.35 | 22.64 | - |
+| light | redis | endpoint_top_titles_duration | 19.18 | 22.16 | 23.37 | - |
+| light | redis | endpoint_search_duration | 19.74 | 24.66 | 25.25 | - |
+| light | redis | endpoint_full_title_duration | 18.76 | 22.74 | 24.06 | - |
+| light | multi | endpoint_titles_list_duration | 18.79 | 21.5 | 22.26 | - |
+| light | multi | endpoint_top_titles_duration | 20.1 | 26.73 | 28.34 | - |
+| light | multi | endpoint_search_duration | 18.43 | 20.39 | 21.05 | - |
+| light | multi | endpoint_full_title_duration | 18.71 | 20.97 | 22.95 | - |
+| heavy | off | endpoint_discover_duration | 7026.64 | 9360.7 | 9757.0 | - |
+| heavy | off | endpoint_top_genres_duration | 12513.46 | 15104.76 | 15428.67 | - |
+| heavy | local | endpoint_discover_duration | 500.06 | 889.93 | 2622.12 | - |
+| heavy | local | endpoint_top_genres_duration | 17.36 | 18.28 | 18.9 | - |
+| heavy | redis | endpoint_discover_duration | 19.19 | 22.18 | 22.83 | - |
+| heavy | redis | endpoint_top_genres_duration | 17.53 | 18.03 | 18.8 | - |
+| heavy | multi | endpoint_discover_duration | 17.74 | 19.01 | 19.8 | - |
+| heavy | multi | endpoint_top_genres_duration | 17.23 | 17.69 | 18.46 | - |
+
+## Улучшение относительно режима off по p95
+
+| Сценарий | Режим | p95 off, мс | p95 режима, мс | Улучшение, % |
+|---|---|---:|---:|---:|
+| light | local | 3298.62 | 23.4 | 99.29 |
+| light | redis | 3298.62 | 24.97 | 99.24 |
+| light | multi | 3298.62 | 24.45 | 99.26 |
+| heavy | local | 13792.83 | 22.46 | 99.84 |
+| heavy | redis | 13792.83 | 22.14 | 99.84 |
+| heavy | multi | 13792.83 | 19.58 | 99.86 |
