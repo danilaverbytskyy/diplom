@@ -16,8 +16,17 @@ class CacheResponseMixin:
     def get_cache_ttl(self) -> int:
         return self.cache_ttl
 
+    def get_cache_namespace(self) -> str:
+        if self.cache_prefix:
+            return self.cache_prefix
+
+        return self.__class__.__name__
+
     def get(self, request, *args, **kwargs):
-        cache_key = self.build_cache_key()
+        cache_key = cache.versioned_key(
+            namespace=self.get_cache_namespace(),
+            key=self.build_cache_key(),
+        )
 
         data = cache.get_or_set(
             key=cache_key,

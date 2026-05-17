@@ -1,5 +1,5 @@
 from threading import Lock, RLock
-from typing import Any, Callable
+from typing import Any, Callable, Set
 
 from .interfaces import CacheInterface
 from .modes import CACHE_MODE_CONFIGS, RedisCacheModeStorage
@@ -90,6 +90,39 @@ class MultiLevelCache(CacheInterface):
         self._refresh_configuration()
         self.local_cache.delete(key)
         self.redis_cache.delete(key)
+
+    def get_namespace_version(self, namespace: str) -> int:
+        """Возвращает версию логической области кеша.
+
+        Namespace-версии используются для точечной инвалидации: при изменении
+        данных увеличивается версия области, и новые запросы начинают читать
+        другие ключи. Старые ключи удаляются по TTL без дорогого scan/delete.
+        """
+        self._refresh_configuration()
+
+        if self.mode_storage is None:
+            return 0
+
+        return self.mode_storage.get_namespace_version(namespace)
+
+    def bump_namespace_version(self, namespace: str) -> int:
+        """Инвалидирует одну логическую область кеша."""
+        if self.mode_storage is None:
+            self.local_cache.clear()
+            return 0
+
+        version = self.mode_storage.bump_namespace_version(namespace)
+        self.local_cache.clear()
+        return version
+
+    def bump_namespace_versions(self, namespaces: list[str] | tuple[str, ...] | Set[str]) -> None:
+        """Инвалидирует несколько областей кеша."""
+        for namespace in sorted(set(namespaces)):
+            self.bump_namespace_version(namespace)
+
+    def versioned_key(self, namespace: str, key: str) -> str:
+        version = self.get_namespace_version(namespace)
+        return f'{namespace}:v{version}:{key}'
 
     def clear(self) -> None:
         """Очищает кеш во всех backend-ах и инвалидирует local cache во всех контейнерах."""

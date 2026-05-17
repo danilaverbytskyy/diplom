@@ -97,6 +97,34 @@ class RedisCacheModeStorage:
             logger.exception('Failed to bump cache version in Redis')
             raise
 
+    def _namespace_version_key(self, namespace: str) -> str:
+        return f'{self.version_key}:namespace:{namespace}'
+
+    def get_namespace_version(self, namespace: str) -> int:
+        try:
+            raw = self.redis_client.get(self._namespace_version_key(namespace))
+        except RedisError:
+            logger.exception('Failed to read namespace cache version from Redis')
+            return 0
+
+        if raw is None:
+            return 0
+
+        if isinstance(raw, bytes):
+            raw = raw.decode('utf-8')
+
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            return 0
+
+    def bump_namespace_version(self, namespace: str) -> int:
+        try:
+            return int(self.redis_client.incr(self._namespace_version_key(namespace)))
+        except RedisError:
+            logger.exception('Failed to bump namespace cache version in Redis')
+            return 0
+
     def normalize_mode(self, mode: str | None) -> str:
         if mode in CACHE_MODE_CONFIGS:
             return str(mode)
