@@ -121,7 +121,7 @@ CACHE_MODE = os.getenv('CACHE_MODE', 'off')
 CACHE_PREFIX = os.getenv('CACHE_PREFIX', 'imdb')
 CACHE_MODE_KEY = f'{CACHE_PREFIX}:control:mode'
 CACHE_VERSION_KEY = f'{CACHE_PREFIX}:control:version'
-CACHE_DEFAULT_TTL = 300
+CACHE_DEFAULT_TTL = 4 * 60 * 60
 
 CACHES = {
     'default': {
@@ -132,7 +132,7 @@ CACHES = {
             'IGNORE_EXCEPTIONS': True,
         },
         'KEY_PREFIX': 'myapp',
-        'TIMEOUT': 300,
+        'TIMEOUT': 4 * 60 * 60,
     },
     'local': {
         'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',

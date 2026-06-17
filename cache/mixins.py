@@ -4,7 +4,7 @@ from cache.instance import cache
 
 
 class CacheResponseMixin:
-    cache_ttl = 300
+    cache_ttl = 4 * 60 * 60
     cache_prefix = None
 
     def build_cache_key(self) -> str:

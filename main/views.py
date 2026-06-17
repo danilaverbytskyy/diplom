@@ -156,7 +156,7 @@ class TitleListView(CacheResponseMixin, generics.ListAPIView):
     serializer_class = TitleListSerializer
     pagination_class = TitlePagination
     cache_prefix = 'titles:list'
-    cache_ttl = 300
+    cache_ttl = 4 * 60 * 60
 
     def get_queryset(self):
         queryset = Title.objects.all()
@@ -237,7 +237,7 @@ class TopTitlesView(CacheResponseMixin, generics.ListAPIView):
     serializer_class = TitleListSerializer
     pagination_class = TitlePagination
     cache_prefix = 'titles:top'
-    cache_ttl = 300
+    cache_ttl = 4 * 60 * 60
 
     def get_queryset(self):
         min_votes = self.request.query_params.get('min_votes', 10000)
@@ -301,7 +301,7 @@ class TitleSearchView(CacheResponseMixin, generics.ListAPIView):
     serializer_class = TitleListSerializer
     pagination_class = TitlePagination
     cache_prefix = 'titles:search'
-    cache_ttl = 300
+    cache_ttl = 4 * 60 * 60
 
     def get_queryset(self):
         query = self.request.query_params.get('q', '').strip()
@@ -453,7 +453,7 @@ class TitleDiscoverView(CacheResponseMixin, generics.ListAPIView):
     serializer_class = TitleListSerializer
     pagination_class = TitlePagination
     cache_prefix = 'titles:discover'
-    cache_ttl = 300
+    cache_ttl = 4 * 60 * 60
 
     def get_queryset(self):
         queryset = (
